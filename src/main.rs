@@ -1,20 +1,42 @@
 // Patito — analizador léxico y sintáctico 
 // Usa `logos` para el lexer y `lalrpop` para el parser.
 
+use std::panic;
+
 mod lexer;
+mod semantic;
 
 use lalrpop_util::lalrpop_mod;
 lalrpop_mod!(grammar);
 
 use lexer::Lexer;
 
+fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
+    match payload.downcast::<String>() {
+        Ok(message) => *message,
+        Err(payload) => match payload.downcast::<&'static str>() {
+            Ok(message) => (*message).to_string(),
+            Err(_) => "panic no textual".to_string(),
+        },
+    }
+}
+
 /// Intenta parsear `src` como un programa Patito.
 /// Devuelve Ok(()) si es valido, o un mensaje de error.
+/// Atrapa panics y los convierte en Err.
 fn parse(src: &str) -> Result<(), String> {
-    let lexer = Lexer::new(src);
-    grammar::ProgramaParser::new()
-        .parse(lexer)
-        .map_err(|e| format!("{:?}", e))
+    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let mut sem = semantic::SemanticState::nuevo();
+        let lexer = Lexer::new(src);
+        grammar::ProgramaParser::new()
+            .parse(&mut sem, lexer)
+            .map_err(|e| format!("{:?}", e))
+    }));
+
+    match result {
+        Ok(parse_result) => parse_result,
+        Err(payload) => Err(panic_payload_to_string(payload)),
+    }
 }
 
 /// Imprime el resultado del test y devuelve true si pasó.
@@ -31,7 +53,22 @@ fn test(label: &str, src: &str) -> bool {
     }
 }
 
+/// Imprime resultado cuando se espera que falle; devuelve true si el error ocurre.
+fn test_should_fail(label: &str, src: &str) -> bool {
+    match parse(src) {
+        Ok(_) => {
+            println!("  [FAIL] {} (debió rechazarse)", label);
+            false
+        }
+        Err(e) => {
+            println!("  [OK]   {}  →  {}", label, e);
+            true
+        }
+    }
+}
+
 fn main() {
+    panic::set_hook(Box::new(|_| {}));
     println!("═══════════════════════════════════════════════════════");
     println!("  Patito — pruebas léxico/sintácticas");
     println!("═══════════════════════════════════════════════════════\n");
@@ -43,6 +80,13 @@ fn main() {
         ($label:expr, $src:expr) => {{
             total += 1;
             if test($label, $src) { ok += 1; }
+        }};
+    }
+
+    macro_rules! run_err {
+        ($label:expr, $src:expr) => {{
+            total += 1;
+            if test_should_fail($label, $src) { ok += 1; }
         }};
     }
 
@@ -184,7 +228,7 @@ fn main() {
 
     // ── Casos de error (deben fallar) ─────────────────────────────────────────
     println!();
-    println!("  — Casos que deben reportar error —");
+    println!("  — Errores de sintaxis —");
 
     total += 1;
     let falla = parse("programa;").is_err(); // falta el id del programa
@@ -228,6 +272,133 @@ fn main() {
     } else {
         println!("  [FAIL] Debió rechazar si sin ;");
     }
+
+    println!();
+    println!("  — Errores semánticos —");
+
+    run_err!(
+        "SemError 1 — variable duplicada",
+        r#"
+        programa dupvar;
+        vars
+            x : entero;
+            x : entero;
+        inicio
+        {
+        }
+        fin
+        "#
+    );
+
+    run_err!(
+        "SemError 2 — asignacion a variable no declarada",
+        r#"
+        programa nodcl;
+        inicio
+        {
+            y = 10;
+        }
+        fin
+        "#
+    );
+
+    run_err!(
+        "SemError 3 — asignacion flotante a entero",
+        r#"
+        programa badassign;
+        vars
+            a : entero;
+        inicio
+        {
+            a = 3.14;
+        }
+        fin
+        "#
+    );
+
+    run_err!(
+        "SemError 4 — funcion duplicada",
+        r#"
+        programa dupfunc;
+
+        entero foo(x : entero) {
+            {
+                regresa(x);
+            }
+        };
+
+        entero foo(y : entero) {
+            {
+                regresa(y);
+            }
+        };
+
+        inicio
+        {
+        }
+        fin
+        "#
+    );
+
+    run_err!(
+        "SemError 5 — llamada a funcion no declarada",
+        r#"
+        programa noexist;
+        inicio
+        {
+            foo(5);
+        }
+        fin
+        "#
+    );
+
+    run_err!(
+        "SemError 6 — regresa fuera de funcion (en global)",
+        r#"
+        programa regresa_global;
+        inicio
+        {
+            regresa(42);
+        }
+        fin
+        "#
+    );
+
+    run_err!(
+        "SemError 7 — regresa con tipo incompatible",
+        r#"
+        programa rettype;
+
+        entero suma(a : entero, b : entero) {
+            {
+                regresa(3.14);
+            }
+        };
+
+        inicio
+        {
+        }
+        fin
+        "#
+    );
+
+    run_err!(
+        "SemError 8 — regresa en funcion con retorno nula",
+        r#"
+        programa regresa_nula;
+
+        nula doNothing(x : entero) {
+            {
+                regresa(x);
+            }
+        };
+
+        inicio
+        {
+        }
+        fin
+        "#
+    );
 
     println!();
     println!("═══════════════════════════════════════════════════════");
