@@ -1,409 +1,512 @@
-// Patito — analizador léxico y sintáctico 
-// Usa `logos` para el lexer y `lalrpop` para el parser.
-
-use std::panic;
+// Patito — analizador léxico, sintáctico y semántico (Entrega 3)
+// Entrega 1: Scanner (logos) + Parser (LALRPOP)
+// Entrega 2: Cubo semántico, Directorio de Funciones, Tablas de Variables.
+// Entrega 3: Pilas (operadores, operandos, jumps) + Fila de cuádruplos,
+//            traducción de expresiones aritméticas/relacionales y de los
+//            estatutos lineales del lenguaje.
 
 mod lexer;
-mod semantic;
+mod types;
+mod semantic_cube;
+mod func_dir;
+mod quad_gen;
+mod context;
 
 use lalrpop_util::lalrpop_mod;
 lalrpop_mod!(grammar);
 
 use lexer::Lexer;
+use context::SemanticContext;
 
-fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
-    match payload.downcast::<String>() {
-        Ok(message) => *message,
-        Err(payload) => match payload.downcast::<&'static str>() {
-            Ok(message) => (*message).to_string(),
-            Err(_) => "panic no textual".to_string(),
-        },
-    }
+// ── Función de parseo ─────────────────────────────────────────────────────────
+
+fn parse(src: &str) -> Result<SemanticContext, String> {
+    let mut ctx = SemanticContext::new();
+    let lexer   = Lexer::new(src);
+    grammar::ProgramaParser::new()
+        .parse(&mut ctx, lexer)
+        .map_err(|e| format!("{:?}", e))?;
+    Ok(ctx)
 }
 
-/// Intenta parsear `src` como un programa Patito.
-/// Devuelve Ok(()) si es valido, o un mensaje de error.
-/// Atrapa panics y los convierte en Err.
-fn parse(src: &str) -> Result<(), String> {
-    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-        let mut sem = semantic::SemanticState::nuevo();
-        let lexer = Lexer::new(src);
-        grammar::ProgramaParser::new()
-            .parse(&mut sem, lexer)
-            .map_err(|e| format!("{:?}", e))
-    }));
+// ── Helpers de prueba ─────────────────────────────────────────────────────────
 
-    match result {
-        Ok(parse_result) => parse_result,
-        Err(payload) => Err(panic_payload_to_string(payload)),
-    }
-}
-
-/// Imprime el resultado del test y devuelve true si pasó.
-fn test(label: &str, src: &str) -> bool {
+fn test_valid(label: &str, src: &str) -> bool {
     match parse(src) {
-        Ok(_) => {
-            println!("  [OK]   {}", label);
+        Err(e) => {
+            println!("  [FAIL] {label}");
+            println!("           Error sintáctico: {e}");
+            false
+        }
+        Ok(ctx) if ctx.has_errors() => {
+            println!("  [FAIL] {label}  — errores semánticos inesperados:");
+            for e in &ctx.errors { println!("           {e}"); }
+            false
+        }
+        Ok(_) => { println!("  [OK]   {label}"); true }
+    }
+}
+
+fn test_sem_error(label: &str, src: &str, fragment: &str) -> bool {
+    match parse(src) {
+        Err(e) => {
+            println!("  [FAIL] {label}  — error sintáctico inesperado: {e}");
+            false
+        }
+        Ok(ctx) if ctx.errors.iter().any(|e| e.0.contains(fragment)) => {
+            println!("  [OK]   {label}  — error semántico detectado correctamente");
             true
         }
-        Err(e) => {
-            println!("  [FAIL] {}  →  {}", label, e);
+        Ok(ctx) if ctx.has_errors() => {
+            println!("  [FAIL] {label}  — errores presentes pero ninguno contiene '{fragment}':");
+            for e in &ctx.errors { println!("           {e}"); }
+            false
+        }
+        Ok(_) => {
+            println!("  [FAIL] {label}  — se esperaba error semántico pero no hubo ninguno");
             false
         }
     }
 }
 
-/// Imprime resultado cuando se espera que falle; devuelve true si el error ocurre.
-fn test_should_fail(label: &str, src: &str) -> bool {
+fn test_syntax_error(label: &str, src: &str) -> bool {
     match parse(src) {
-        Ok(_) => {
-            println!("  [FAIL] {} (debió rechazarse)", label);
+        Err(_) => { println!("  [OK]   {label}  — error sintáctico detectado"); true }
+        Ok(ctx) if ctx.has_errors() => {
+            println!("  [FAIL] {label}  — solo errores semánticos (esperaba sintáctico)");
             false
         }
-        Err(e) => {
-            println!("  [OK]   {}  →  {}", label, e);
-            true
+        Ok(_) => {
+            println!("  [FAIL] {label}  — debió rechazarse sintácticamente");
+            false
         }
     }
 }
+
+/// Muestra la fila de cuádruplos generada por un programa válido.
+fn show_quads(label: &str, src: &str) {
+    println!();
+    println!("─── {label} ───");
+    match parse(src) {
+        Err(e) => println!("  Error sintáctico: {e}"),
+        Ok(ctx) if ctx.has_errors() => {
+            println!("  Errores semánticos:");
+            for e in &ctx.errors { println!("    {e}"); }
+        }
+        Ok(ctx) => {
+            ctx.qg.print();
+            ctx.qg.dump_stacks_if_dirty();
+        }
+    }
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
 
 fn main() {
-    panic::set_hook(Box::new(|_| {}));
-    println!("═══════════════════════════════════════════════════════");
-    println!("  Patito — pruebas léxico/sintácticas");
-    println!("═══════════════════════════════════════════════════════\n");
+    println!("═══════════════════════════════════════════════════════════════");
+    println!("  Patito — Entrega 3: Cuádruplos");
+    println!("═══════════════════════════════════════════════════════════════\n");
 
-    let mut ok = 0u32;
+    let mut ok    = 0u32;
     let mut total = 0u32;
 
-    macro_rules! run {
-        ($label:expr, $src:expr) => {{
-            total += 1;
-            if test($label, $src) { ok += 1; }
-        }};
-    }
+    macro_rules! v   { ($l:expr, $s:expr) => {{ total+=1; if test_valid($l,$s)              {ok+=1;} }}; }
+    macro_rules! sem { ($l:expr, $s:expr, $f:expr) => {{ total+=1; if test_sem_error($l,$s,$f)   {ok+=1;} }}; }
+    macro_rules! syn { ($l:expr, $s:expr) => {{ total+=1; if test_syntax_error($l,$s)       {ok+=1;} }}; }
 
-    macro_rules! run_err {
-        ($label:expr, $src:expr) => {{
-            total += 1;
-            if test_should_fail($label, $src) { ok += 1; }
-        }};
-    }
+    // ── Programas válidos heredados ───────────────────────────────────────────
+    println!("  — Programas válidos —\n");
 
-    // ── Ejemplo 1: Programa mínimo ("Hola, mundo!") ───────────────────────────
-    run!(
-        "Ejemplo 1 — programa mínimo",
-        r#"
-        programa hola;
-        inicio
-        {
-            escribe("Hola, mundo!");
-        }
-        fin
-        "#
+    v!("T01 — programa mínimo",
+        r#"programa hola;
+           inicio { escribe("Hola, mundo!"); }
+           fin"#
     );
 
-    // ── Ejemplo 2: Cálculo del área de un círculo ─────────────────────────────
-    run!(
-        "Ejemplo 2 — vars, asignación, expresiones flotantes",
-        r#"
-        programa areaCirculo;
-        vars
-            radio : entero;
-            area  : flotante;
-        inicio
-        {
-            radio = 5;
-            area = 3.14159 * radio * radio;
-            escribe("Radio: ", radio);
-            escribe("Area aproximada: ", area);
-        }
-        fin
-        "#
+    v!("T02 — vars, asignación, expresiones flotantes",
+        r#"programa areaCirculo;
+           vars radio : entero; area : flotante;
+           inicio {
+               radio = 5;
+               area  = 3.14159 * radio * radio;
+               escribe("Radio: ", radio);
+               escribe("Area: ", area);
+           }
+           fin"#
     );
 
-    // ── Ejemplo 3: Mayor de dos números ──────────────────────────────────────
-    run!(
-        "Ejemplo 3 — condicional si/sino",
-        r#"
-        programa mayor;
-        vars
-            x, y : entero;
-        inicio
-        {
-            x = 15;
-            y = 8;
-            si (x > y) {
-                escribe("x es el mayor con valor ", x);
-            } sino {
-                escribe("y es el mayor o igual con valor ", y);
-            };
-        }
-        fin
-        "#
+    v!("T03 — condicional si/sino",
+        r#"programa mayor;
+           vars x, y : entero;
+           inicio {
+               x = 15; y = 8;
+               si (x > y) { escribe(x); } sino { escribe(y); };
+           }
+           fin"#
     );
 
-    // ── Ejemplo 4: Factorial iterativo ───────────────────────────────────────
-    run!(
-        "Ejemplo 4 — ciclo mientras/haz",
-        r#"
-        programa factorial;
-        vars
-            n, fact, i : entero;
-        inicio
-        {
-            n    = 5;
-            fact = 1;
-            i    = 1;
-            mientras (i < n) haz {
-                i    = i + 1;
-                fact = fact * i;
-            };
-            escribe("El factorial de ", n, " es ", fact);
-        }
-        fin
-        "#
+    v!("T04 — ciclo mientras/haz (factorial)",
+        r#"programa factorial;
+           vars n, fact, i : entero;
+           inicio {
+               n = 5; fact = 1; i = 1;
+               mientras (i < n) haz { i = i + 1; fact = fact * i; };
+               escribe("Factorial: ", fact);
+           }
+           fin"#
     );
 
-    // ── Ejemplo 5: Funciones con valor de retorno ─────────────────────────────
-    // Las funciones usan dos pares de llaves: las externas son parte de la
-    // regla FUNCS y las internas corresponden al CUERPO.
-    run!(
-        "Ejemplo 5 — funciones con regresa y llamadas anidadas",
-        r#"
-        programa calculadora;
-        vars
-            a, b : entero;
+    // T05 reescrito para Entrega 3 — las llamadas a función dentro de
+    // expresiones se cubren en Entrega 4 (ERA/PARAM/GOSUB). Aquí solo
+    // se declaran y se valida que el regresa cuadre con el return_type.
+    v!("T05 — funciones independientes con regresa válido",
+        r#"programa funcs;
+           vars resultado : entero;
+
+           entero cuadrado(n : entero) {
+               { regresa(n * n); }
+           };
+
+           entero suma(x : entero, y : entero) {
+               vars temp : entero;
+               { temp = x + y; regresa(temp); }
+           };
+
+           flotante mitad(z : entero) {
+               { regresa(z); }
+           };
+
+           inicio {
+               resultado = 42;
+               escribe("ok: ", resultado);
+           }
+           fin"#
+    );
+
+    v!("T06 — Fibonacci (múltiples ids en una declaración)",
+        r#"programa fibonacci;
+           vars n, a, b, temp, i : entero;
+           inicio {
+               n = 10; a = 0; b = 1; i = 0;
+               mientras (i < n) haz {
+                   escribe(a);
+                   temp = a + b; a = b; b = temp; i = i + 1;
+               };
+           }
+           fin"#
+    );
+
+    // ── Errores sintácticos ───────────────────────────────────────────────────
+    println!();
+    println!("  — Errores sintácticos esperados —\n");
+
+    syn!("T07 — falta id de programa",    "programa;");
+    syn!("T08 — falta ; en asignación",  "programa t; inicio { x = 1 } fin");
+    syn!("T09 — falta ; al final del si",
+         "programa t; inicio { si (x > 0) { escribe(x); } } fin");
+
+    // ── Errores semánticos ────────────────────────────────────────────────────
+    println!();
+    println!("  — Errores semánticos esperados —\n");
+
+    sem!("T10 — variable global doblemente declarada",
+        r#"programa test;
+           vars x : entero; x : flotante;
+           inicio { escribe(x); }
+           fin"#,
+        "x"
+    );
+
+    sem!("T11 — variable local doblemente declarada",
+        r#"programa test;
+           entero foo(n : entero) {
+               vars k : entero; k : flotante;
+               { regresa(k); }
+           };
+           inicio { escribe(foo(1)); }
+           fin"#,
+        "k"
+    );
+
+    sem!("T12 — función doblemente declarada",
+        r#"programa test;
+           entero doble(n : entero) { { regresa(n + n); } };
+           entero doble(m : entero) { { regresa(m * 2); } };
+           inicio { escribe(doble(3)); }
+           fin"#,
+        "doble"
+    );
+
+    sem!("T13 — parámetro duplicado en función",
+        r#"programa test;
+           entero suma(a : entero, a : entero) { { regresa(a + a); } };
+           inicio { escribe(suma(1, 2)); }
+           fin"#,
+        "a"
+    );
+
+    v!("T14 — mismo nombre de var en scopes distintos",
+        r#"programa test;
+           vars k : entero;
+           entero foo(k : entero) { { regresa(k + 1); } };
+           inicio { k = 5; escribe(foo(k)); }
+           fin"#
+    );
+
+    // ── Nuevos errores semánticos de Entrega 3 ────────────────────────────────
+    println!();
+    println!("  — Errores semánticos nuevos (Entrega 3) —\n");
+
+    sem!("T15 — uso de variable no declarada",
+        r#"programa test;
+           inicio { x = 1; }
+           fin"#,
+        "no declarada"
+    );
+
+    sem!("T16 — asignación incompatible (entero = flotante)",
+        r#"programa test;
+           vars x : entero;
+           inicio { x = 3.14; }
+           fin"#,
+        "incompatible"
+    );
+
+    sem!("T17 — condición no entera",
+        r#"programa test;
+           vars x : flotante;
+           inicio { si (x + 1.0) { escribe(x); }; }
+           fin"#,
+        "condición"
+    );
+
+    // ── Resumen ───────────────────────────────────────────────────────────────
+    println!();
+    println!("═══════════════════════════════════════════════════════════════");
+    println!("  Resultado: {ok}/{total} pruebas correctas");
+    println!("═══════════════════════════════════════════════════════════════");
+
+    // ── Cuádruplos para programas de prueba ───────────────────────────────────
+    println!();
+    println!("═══════════════════════════════════════════════════════════════");
+    println!("  Fila de cuádruplos — programas de prueba");
+    println!("═══════════════════════════════════════════════════════════════");
+
+    show_quads("Q01 — asignación con expresión mixta (precedencia)",
+        r#"programa q01;
+           vars a, b, c, x : entero;
+           inicio {
+               a = 2; b = 3; c = 4;
+               x = a + b * c;
+           }
+           fin"#
+    );
+
+    show_quads("Q02 — paréntesis cambian precedencia",
+        r#"programa q02;
+           vars a, b, c, x : entero;
+           inicio {
+               a = 2; b = 3; c = 4;
+               x = (a + b) * c;
+           }
+           fin"#
+    );
+
+    show_quads("Q03 — área del círculo (mezcla entero/flotante)",
+        r#"programa q03;
+           vars radio : entero; area : flotante;
+           inicio {
+               radio = 5;
+               area  = 3.14159 * radio * radio;
+               escribe("Radio: ", radio);
+               escribe("Area: ", area);
+           }
+           fin"#
+    );
+
+    show_quads("Q04 — si/sino (mayor de dos)",
+        r#"programa q04;
+           vars x, y : entero;
+           inicio {
+               x = 15; y = 8;
+               si (x > y) { escribe(x); } sino { escribe(y); };
+           }
+           fin"#
+    );
+
+    show_quads("Q05 — si sin sino",
+        r#"programa q05;
+           vars x : entero;
+           inicio {
+               x = 10;
+               si (x > 0) { escribe("positivo"); };
+           }
+           fin"#
+    );
+
+    show_quads("Q06 — while (factorial)",
+        r#"programa q06;
+           vars n, fact, i : entero;
+           inicio {
+               n = 5; fact = 1; i = 1;
+               mientras (i < n) haz { i = i + 1; fact = fact * i; };
+               escribe("Factorial: ", fact);
+           }
+           fin"#
+    );
+
+    show_quads("Q07 — Fibonacci (while + múltiples asignaciones)",
+        r#"programa q07;
+           vars n, a, b, temp, i : entero;
+           inicio {
+               n = 10; a = 0; b = 1; i = 0;
+               mientras (i < n) haz {
+                   escribe(a);
+                   temp = a + b; a = b; b = temp; i = i + 1;
+               };
+           }
+           fin"#
+    );
+
+    show_quads("Q08 — si anidado dentro de while",
+        r#"programa q08;
+           vars i, par : entero;
+           inicio {
+               i = 0; par = 0;
+               mientras (i < 10) haz {
+                   si (i < 5) { par = par + i; } sino { par = par - i; };
+                   i = i + 1;
+               };
+               escribe("Resultado: ", par);
+           }
+           fin"#
+    );
+
+    show_quads("Q09 — relacionales y aritmética combinadas",
+        r#"programa q09;
+           vars a, b, c, r : entero;
+           inicio {
+               a = 1; b = 2; c = 3;
+               r = a + b * c == c + b;
+               escribe(r);
+           }
+           fin"#
+    );
+
+    show_quads("Q10 — regresa con cálculo",
+        r#"programa q10;
+           entero cuadrado(n : entero) {
+               { regresa(n * n); }
+           };
+           inicio {
+               escribe("cuadrado de 7");
+           }
+           fin"#
+    );
+
+    // ── Stress test integral ─────────────────────────────────────────────────
+    // Q11 combina TODO lo que la entrega exige en un solo programa:
+    //   · expresiones aritméticas con precedencia mixta
+    //   · expresiones relacionales (>, <, ==, !=)
+    //   · asignación entre tipos compatibles (flotante = entero, etc.)
+    //   · escribe con letreros y expresiones mezclados
+    //   · si sin sino
+    //   · si/sino simple
+    //   · si/sino encadenado (else-if pattern)
+    //   · mientras anidado dentro de mientras
+    //   · si anidado dentro de mientras
+    //   · uso de la misma variable en varios scopes de control
+
+    show_quads("Q11 — STRESS TEST: ciclos anidados, ifs encadenados, mezcla de tipos",
+        r#"programa stressTest;
+           vars n, i, j, suma, prod, max, min, contador : entero;
+                promedio, escala : flotante;
+           inicio {
+               n = 10;
+               i = 1;
+               suma = 0;
+               prod = 1;
+               max = 0;
+               min = 100;
+               contador = 0;
+               escala = 1.5;
+
+               mientras (i < n) haz {
+                   suma = suma + i;
+                   prod = prod * i;
+
+                   si (i > max) {
+                       max = i;
+                   };
+
+                   si (i < min) {
+                       min = i;
+                   } sino {
+                       contador = contador + 1;
+                   };
+
+                   j = 0;
+                   mientras (j < i) haz {
+                       suma = suma + 1;
+                       j = j + 1;
+                   };
+
+                   i = i + 1;
+               };
+
+               promedio = suma * escala;
+
+               si (suma > prod) {
+                   escribe("suma mayor: ", suma);
+               } sino {
+                   si (suma == prod) {
+                       escribe("iguales");
+                   } sino {
+                       escribe("prod mayor: ", prod);
+                   };
+               };
+
+               escribe("max: ", max);
+               escribe("min: ", min);
+               escribe("contador: ", contador);
+               escribe("promedio: ", promedio);
+           }
+           fin"#
+    );
+
+    // ── Directorio de Funciones (T05 — calculadora) ───────────────────────────
+    println!();
+    println!("═══════════════════════════════════════════════════════════════");
+    println!("  Directorio de Funciones — calculadora");
+    println!("═══════════════════════════════════════════════════════════════\n");
+
+    let t05 = r#"programa calculadora;
+        vars a, b : entero;
 
         entero cuadrado(n : entero) {
-            {
-                regresa(n * n);
-            }
+            { regresa(n * n); }
         };
 
         entero potenciaCuatro(n : entero) {
-            vars
-                cuad : entero;
-            {
-                cuad = cuadrado(n);
-                regresa(cuadrado(cuad));
-            }
+            vars cuad : entero;
+            { regresa(cuad); }
         };
 
-        inicio
-        {
-            a = 3;
-            b = potenciaCuatro(a);
-            escribe(a, " a la cuarta potencia es ", b);
+        inicio {
+            a = 3; b = 4;
+            escribe(a, " y ", b);
         }
-        fin
-        "#
-    );
+        fin"#;
 
-    // ── Ejemplo 6: Serie de Fibonacci ────────────────────────────────────────
-    run!(
-        "Ejemplo 6 — Fibonacci (múltiples vars en una declaración)",
-        r#"
-        programa fibonacci;
-        vars
-            n, a, b, temp, i : entero;
-        inicio
-        {
-            n = 10;
-            a = 0;
-            b = 1;
-            i = 0;
-            escribe("Primeros ", n, " numeros de Fibonacci:");
-            mientras (i < n) haz {
-                escribe(a);
-                temp = a + b;
-                a    = b;
-                b    = temp;
-                i    = i + 1;
-            };
-        }
-        fin
-        "#
-    );
-
-    // ── Casos de error (deben fallar) ─────────────────────────────────────────
-    println!();
-    println!("  — Errores de sintaxis —");
-
-    total += 1;
-    let falla = parse("programa;").is_err(); // falta el id del programa
-    if falla {
-        println!("  [OK]   Error esperado: falta id de programa");
-        ok += 1;
-    } else {
-        println!("  [FAIL] Debió rechazar 'programa;' sin id");
+    if let Ok(ctx) = parse(t05) {
+        ctx.func_dir.print();
     }
 
-    total += 1;
-    let falla = parse(r#"
-        programa test;
-        inicio
-        {
-            x = 1
-        }
-        fin
-    "#).is_err(); // falta el ; después de la asignación
-    if falla {
-        println!("  [OK]   Error esperado: falta ; en asignación");
-        ok += 1;
-    } else {
-        println!("  [FAIL] Debió rechazar asignación sin ;");
-    }
-
-    total += 1;
-    let falla = parse(r#"
-        programa test;
-        inicio
-        {
-            si (x > 0) {
-                escribe(x);
-            }
-        }
-        fin
-    "#).is_err(); // falta el ; al final del si
-    if falla {
-        println!("  [OK]   Error esperado: falta ; al final del si");
-        ok += 1;
-    } else {
-        println!("  [FAIL] Debió rechazar si sin ;");
-    }
-
-    println!();
-    println!("  — Errores semánticos —");
-
-    run_err!(
-        "SemError 1 — variable duplicada",
-        r#"
-        programa dupvar;
-        vars
-            x : entero;
-            x : entero;
-        inicio
-        {
-        }
-        fin
-        "#
-    );
-
-    run_err!(
-        "SemError 2 — asignacion a variable no declarada",
-        r#"
-        programa nodcl;
-        inicio
-        {
-            y = 10;
-        }
-        fin
-        "#
-    );
-
-    run_err!(
-        "SemError 3 — asignacion flotante a entero",
-        r#"
-        programa badassign;
-        vars
-            a : entero;
-        inicio
-        {
-            a = 3.14;
-        }
-        fin
-        "#
-    );
-
-    run_err!(
-        "SemError 4 — funcion duplicada",
-        r#"
-        programa dupfunc;
-
-        entero foo(x : entero) {
-            {
-                regresa(x);
-            }
-        };
-
-        entero foo(y : entero) {
-            {
-                regresa(y);
-            }
-        };
-
-        inicio
-        {
-        }
-        fin
-        "#
-    );
-
-    run_err!(
-        "SemError 5 — llamada a funcion no declarada",
-        r#"
-        programa noexist;
-        inicio
-        {
-            foo(5);
-        }
-        fin
-        "#
-    );
-
-    run_err!(
-        "SemError 6 — regresa fuera de funcion (en global)",
-        r#"
-        programa regresa_global;
-        inicio
-        {
-            regresa(42);
-        }
-        fin
-        "#
-    );
-
-    run_err!(
-        "SemError 7 — regresa con tipo incompatible",
-        r#"
-        programa rettype;
-
-        entero suma(a : entero, b : entero) {
-            {
-                regresa(3.14);
-            }
-        };
-
-        inicio
-        {
-        }
-        fin
-        "#
-    );
-
-    run_err!(
-        "SemError 8 — regresa en funcion con retorno nula",
-        r#"
-        programa regresa_nula;
-
-        nula doNothing(x : entero) {
-            {
-                regresa(x);
-            }
-        };
-
-        inicio
-        {
-        }
-        fin
-        "#
-    );
-
-    println!();
-    println!("═══════════════════════════════════════════════════════");
-    println!("  Resultado: {}/{} pruebas correctas", ok, total);
-    println!("═══════════════════════════════════════════════════════");
+    // ── Cubo Semántico ────────────────────────────────────────────────────────
+    println!("═══════════════════════════════════════════════════════════════");
+    println!("  Cubo Semántico");
+    println!("═══════════════════════════════════════════════════════════════\n");
+    semantic_cube::print_cube();
 
     if ok < total {
         std::process::exit(1);

@@ -1,16 +1,26 @@
-// ── Gramática libre de contexto del lenguaje Patito ──────────────────────────
-// Las reglas devuelven tipos cuando es necesario para los puntos neurálgicos
-// del análisis semántico; el resto devuelve ().
+// ── Gramática libre de contexto del lenguaje Patito — Entrega 3 ──────────────
+//
+// Cambios respecto a Entrega 2:
+//   · Se separan AsignStmt y CallStmt en el nivel de Estatuto (LALR(1) lo
+//     resuelve por lookahead: id "=" → AsignStmt, id "(" → CallStmt).
+//   · Se añaden puntos neurálgicos para la generación de cuádruplos en:
+//       - operadores binarios y de asignación
+//       - paréntesis de agrupación (fondo falso)
+//       - constantes e identificadores como operandos
+//       - escribe, regresa, si/sino, mientras
+//   · Tipo y TipoONulo retornan Type; ListaIds y Argument* retornan tuplas.
 
-use crate::lexer::Token;
-use crate::semantic::{SemanticState, Tipo, TipoOp};
+use crate::lexer::{Token, LexError};
+use crate::types::Type;
+use crate::context::SemanticContext;
+use crate::semantic_cube::Op;
 
-grammar(sem: &mut SemanticState);
+grammar(ctx: &mut SemanticContext);
 
-// ── Declaración del lexer externo (logos)
+// ── Lexer externo (logos) ─────────────────────────────────────────────────────
 extern {
     type Location = usize;
-    type Error = String;
+    type Error = LexError;
 
     enum Token {
         "programa" => Token::Programa,
@@ -52,365 +62,321 @@ extern {
 }
 
 // ── §4.1  Programa ────────────────────────────────────────────────────────────
-// <Programa> → programa id ; <VARS_OPT> <FUNCS_LIST> inicio <CUERPO> fin
-// PN1: al ver `programa id ;` se crea el scope "global" en el DirFunc.
-pub Programa: () = {
-    Header VarsOpt FuncsList "inicio" Cuerpo "fin" => ()
+
+ProgramaHead: () = {
+    "programa" <name:"id"> ";" => { ctx.start_program(name); }
 };
 
-// Cabecera del programa: consume 'programa id ;' y ejecuta PN1.
-Header: () = {
-    "programa" <id:"id"> ";" => {
-        sem.iniciar_programa(&id).expect("PN1: iniciar programa");
-    }
+pub Programa: () = {
+    ProgramaHead VarsOpt FuncsList "inicio" Cuerpo "fin" => ()
 };
 
 // ── §4.2  Variables (bloque opcional) ────────────────────────────────────────
-// <VARS_OPT> → <VARS> | ε
+
 VarsOpt: () = {
     Vars => (),
-         => (),   // ε: no hay bloque vars
+         => (),
 };
 
-// <VARS> → vars <LISTA_DEC>
 Vars: () = {
     "vars" ListaDec => ()
 };
 
-// <LISTA_DEC> → <DEC> <COLA_DEC>
 ListaDec: () = {
     Dec ColaDec => ()
 };
 
-// <COLA_DEC> → <DEC> <COLA_DEC> | ε
 ColaDec: () = {
     Dec ColaDec => (),
                 => (),
 };
 
-// <DEC> → <LISTA_IDS> : <TIPO> ;
-// PN2: por cada id de la lista, se inserta en la tabla del scope actual con
-// el tipo declarado. Variable duplicada genera SemanticError.
 Dec: () = {
     <ids:ListaIds> ":" <t:Tipo> ";" => {
         for id in ids {
-            sem.declarar_variable(id, t).expect("PN2: declarar variable");
+            ctx.declare_var(id, t);
         }
     }
 };
 
-// <LISTA_IDS> → id <COLA_IDS>
-// Ahora retorna Vec<String> para que <DEC> pueda iterar sobre todos los ids.
 ListaIds: Vec<String> = {
-    <id:"id"> <mut resto:ColaIds> => {
+    <id:"id"> <rest:ColaIds> => {
         let mut v = vec![id];
-        v.append(&mut resto);
+        v.extend(rest);
         v
     }
 };
 
-// <COLA_IDS> → , id <COLA_IDS> | ε
 ColaIds: Vec<String> = {
-    "," <id:"id"> <mut resto:ColaIds> => {
+    "," <id:"id"> <rest:ColaIds> => {
         let mut v = vec![id];
-        v.append(&mut resto);
+        v.extend(rest);
         v
     },
-    => Vec::new(),
+    => vec![],
 };
 
 // ── §4.3  Tipos ───────────────────────────────────────────────────────────────
-// <TIPO> → entero | flotante
-// Retorna Tipo para que las declaraciones y expresiones puedan tiparse.
-Tipo: Tipo = {
-    "entero"   => Tipo::Entero,
-    "flotante" => Tipo::Flotante,
+
+Tipo: Type = {
+    "entero"   => Type::Entero,
+    "flotante" => Type::Flotante,
 };
 
-// <TIPO_O_NULO> → <TIPO> | nula
-TipoONulo: Tipo = {
-    Tipo   => <>,
-    "nula" => Tipo::Nula,
+TipoONulo: Type = {
+    <t:Tipo> => t,
+    "nula"   => Type::Nula,
 };
 
 // ── §4.4  Funciones ───────────────────────────────────────────────────────────
-// <FUNCS_LIST> → <FUNCS> <FUNCS_LIST> | ε
+
+FuncBegin: () = {
+    <rt:TipoONulo> <name:"id"> "(" <params:ArgumentList> ")" => {
+        ctx.begin_func(name, rt, params);
+    }
+};
+
 FuncsList: () = {
     Funcs FuncsList => (),
                     => (),
 };
 
-// <FUNCS> → <TIPO_O_NULO> id ( <ARGUMENT_LIST> ) { <VARS_OPT> <CUERPO> } ;
-// Nota: la llave { aquí es la del encabezado de función; la llave del CUERPO
-// es un segundo par de llaves (ver ejemplos del documento).
-// PN3: al leer `<TipoONulo> id` se registra la función en el DirFunc y se
-// cambia el scope_actual a su nombre, para que parámetros y vars locales se
-// inserten en SU tabla.
-// PN5: al terminar el cuerpo `} ;` se regresa el scope_actual a "global".
 Funcs: () = {
-    FuncHeader "(" ArgumentList ")" "{" VarsOpt Cuerpo "}" ";" FuncFooter => ()
+    FuncBegin "{" VarsOpt Cuerpo "}" ";" => { ctx.end_func(); }
 };
 
-// Cabecera de función: registra la función y cambia el scope.
-FuncHeader: () = {
-    <t:TipoONulo> <id:"id"> => {
-        sem.declarar_funcion(id.clone(), t).expect("PN3: declarar función");
-    }
+ArgumentList: Vec<(String, Type)> = {
+    <a:Argument> <rest:ColaArguments> => {
+        let mut v = vec![a];
+        v.extend(rest);
+        v
+    },
+    => vec![],
 };
 
-// Cierra la función (restaura el scope global).
-FuncFooter: () = {
-    => { sem.cerrar_funcion(); }
+ColaArguments: Vec<(String, Type)> = {
+    "," <a:Argument> <rest:ColaArguments> => {
+        let mut v = vec![a];
+        v.extend(rest);
+        v
+    },
+    => vec![],
 };
 
-// <ARGUMENT_LIST> → <ARGUMENT> <COLA_ARGUMENTS> | ε
-ArgumentList: () = {
-    Argument ColaArguments => (),
-                           => (),
-};
-
-// <COLA_ARGUMENTS> → , <ARGUMENT> <COLA_ARGUMENTS> | ε
-ColaArguments: () = {
-    "," Argument ColaArguments => (),
-                               => (),
-};
-
-// <ARGUMENT> → id : <TIPO>
-// PN4: el parámetro se agrega a params (orden importante para llamadas) y
-// también a la tabla de variables locales de la función actual.
-Argument: () = {
-    <id:"id"> ":" <t:Tipo> => {
-        sem.declarar_parametro(id, t).expect("PN4: declarar parámetro");
-    }
+Argument: (String, Type) = {
+    <id:"id"> ":" <t:Tipo> => (id, t)
 };
 
 // ── §4.5  Cuerpo y lista de estatutos ─────────────────────────────────────────
-// <CUERPO> → { <ESTATUTO_LIST> }
+
 Cuerpo: () = {
-    "{" EstatutoList "}"
+    "{" EstatutoList "}" => ()
 };
 
-// <ESTATUTO_LIST> → <ESTATUTO> <COLA_ESTATUTOS> | ε
 EstatutoList: () = {
     Estatuto ColaEstatutos => (),
                            => (),
 };
 
-// <COLA_ESTATUTOS> → <ESTATUTO> <COLA_ESTATUTOS> | ε
 ColaEstatutos: () = {
     Estatuto ColaEstatutos => (),
                            => (),
 };
 
 // ── §4.6  Estatutos ───────────────────────────────────────────────────────────
-// Se factorizó para que cada alternativa empiece con un token distinto (LL(1)):
-//   id        → asignación o llamada a función
-//   si        → condicional
-//   mientras  → ciclo
-//   escribe   → impresión
-//   regresa   → retorno
-//   [         → bloque de estatutos entre corchetes
-// El id se propaga a ColaIdEst para que PN11 (asignación) y PN7 (llamada)
-// puedan validarlo contra las tablas.
-Estatuto: () = {
-    <id:"id"> "=" <e:Expresion> ";" => {
-        sem.validar_asignacion(&id, e).expect("PN11: validar asignación");
-    },
-    <id:"id"> "(" ExpresionList ")" ";" => {
-        sem.buscar_funcion(&id).expect("PN7: buscar función");
-        // (la validación de argumentos contra params queda para Entrega 3)
-    },
-    Condicion => (),
-    Ciclo => (),
-    Imprime => (),
-    Regresa => (),
-    "[" EstatutoList "]" => (),   // bloque entre corchetes
-};
+//
+// Asignación y llamada se separan al nivel del Estatuto. El parser LALR(1)
+// usa el lookahead (= vs ( ) para decidir cuál producción reducir.
 
-// Después de un id en un estatuto: asignación o llamada.
-// <COLA_ID_EST> → <COLA_ASIGNA> | <COLA_LLAMADA> ;
-// PN11: valida que la variable exista y que el tipo de la expresión sea
-// asignable al tipo de la variable según el cubo.
-// PN7: valida que la función exista en el DirFunc.
+Estatuto: () = {
+    AsignStmt            => (),
+    CallStmt             => (),
+    Condicion            => (),
+    Ciclo                => (),
+    Imprime              => (),
+    Regresa              => (),
+    "[" EstatutoList "]" => (),
+};
 
 // ── §4.7  Asignación ──────────────────────────────────────────────────────────
-// <COLA_ASIGNA> → = <EXPRESION> ;
-// Nota: el contenido de COLA_ASIGNA se integró directamente en ColaIdEst
-// arriba, porque PN11 necesita acceso al id (que vive en la regla padre).
-// Conceptualmente la regla sigue siendo la misma; solo se reubicó la acción.
+//
+// Tres puntos neurálgicos:
+//   AsignLhs : empuja el id como operando (con su tipo resuelto)
+//   AsignEq  : empuja el operador '=' (precedencia 1, queda en el fondo)
+//   AsignStmt al ';' : force_collapse del Asig, emite el cuádruplo
 
-// ── §4.8  Llamada a función ───────────────────────────────────────────────────
-// <COLA_LLAMADA> → ( <EXPRESION_LIST> )
-// La llamada como estatuto se manejó en ColaIdEst (necesita el id del padre).
-// Aquí queda la llamada "cruda" que se usa dentro de FACTOR (en expresiones).
-ColaLlamadaRaw: () = {
-    "(" ExpresionList ")"
+AsignStmt: () = {
+    AsignLhs AsignEq Expresion ";" => { ctx.end_assignment(); }
 };
 
-// <EXPRESION_LIST> → <EXPRESION> <COLA_EXPRESION> | ε
+AsignLhs: () = {
+    <id:"id"> => { ctx.push_id_operand(id); }
+};
+
+AsignEq: () = {
+    "=" => { ctx.push_operator(Op::Asig); }
+};
+
+// ── §4.8  Llamada a función (placeholder Entrega 4) ──────────────────────────
+
+CallStmt: () = {
+    "id" "(" ExpresionList ")" ";" => {
+        // Entrega 4: ERA, PARAM, GOSUB. Por ahora se acepta sintácticamente.
+    }
+};
+
 ExpresionList: () = {
     Expresion ColaExpresion => (),
                             => (),
 };
 
-// <COLA_EXPRESION> → , <EXPRESION> <COLA_EXPRESION> | ε
 ColaExpresion: () = {
     "," Expresion ColaExpresion => (),
                                 => (),
 };
 
 // ── §4.9  Condicional ─────────────────────────────────────────────────────────
-// <CONDICION> → si ( <EXPRESION> ) <CUERPO> <SINO_OPC> ;
-// Validación adicional: la expresión condicional no puede ser de tipo nula
-// (aunque por construcción del cubo nunca lo será — defensa en profundidad).
+//
+//   "si" "(" Expresion ")"           ← evalúa cond, deja operando en pila
+//   CondGotoF                        ← pop cond, valida Entero, emite GOTOF pendiente
+//   Cuerpo                           ← cuerpo del si
+//   SinoOpc                          ← si hay sino: emite GOTO y rellena GOTOF
+//   CondEnd                          ← rellena el salto que quedó pendiente
+//   ";"
+
 Condicion: () = {
-    "si" "(" <e:Expresion> ")" Cuerpo SinoOpc ";" => {
-        if e == Tipo::Nula {
-            panic!("la condición del si no puede ser de tipo nula");
-        }
-    }
+    "si" "(" Expresion ")" CondGotoF Cuerpo SinoOpc CondEnd ";" => ()
 };
 
-// <SINO_OPC> → sino <CUERPO> | ε
+CondGotoF: () = { => { ctx.gen_gotof_if(); } };
+
+CondEnd:   () = { => { ctx.end_if(); } };
+
 SinoOpc: () = {
-    "sino" Cuerpo => (),
-                  => (),
+    "sino" SinoStart Cuerpo => (),
+                            => (),
 };
+
+SinoStart: () = { => { ctx.gen_else_goto(); } };
 
 // ── §4.10  Ciclo ──────────────────────────────────────────────────────────────
-// <CICLO> → mientras ( <EXPRESION> ) haz <CUERPO> ;
+//
+//   "mientras"                       ← antes de '(': marca punto de retorno
+//   CicloStart
+//   "(" Expresion ")"                ← evalúa cond
+//   CicloAfterCond                   ← pop cond, valida, emite GOTOF pendiente
+//   "haz" Cuerpo                     ← cuerpo del while
+//   CicloEnd                         ← emite GOTO al inicio, rellena GOTOF
+//   ";"
+
 Ciclo: () = {
-    "mientras" "(" <e:Expresion> ")" "haz" Cuerpo ";" => {
-        if e == Tipo::Nula {
-            panic!("la condición del mientras no puede ser de tipo nula");
-        }
-    }
+    "mientras" CicloStart "(" Expresion ")" CicloAfterCond "haz" Cuerpo CicloEnd ";" => ()
 };
+
+CicloStart:     () = { => { ctx.push_return_point(); } };
+CicloAfterCond: () = { => { ctx.gen_gotof_while(); } };
+CicloEnd:       () = { => { ctx.end_while(); } };
 
 // ── §4.11  Impresión ──────────────────────────────────────────────────────────
-// <IMPRIME> → escribe ( <ELEM_IMPRIME> <COLA_IMPRIME> ) ;
+
 Imprime: () = {
-    "escribe" "(" ElemImprime ColaImprime ")" ";"
+    "escribe" "(" ElemImprime ColaImprime ")" ";" => ()
 };
 
-// <ELEM_IMPRIME> → <EXPRESION> | letrero
-// "letrero" (cadena literal) no puede empezar una expresión, así que
-// el parser distingue ambas alternativas con 1 token de lookahead.
 ElemImprime: () = {
-    Expresion => (),
-    "letrero" => (),
+    Expresion          => { ctx.emit_print_expr(); },
+    <s:"letrero">      => { ctx.emit_print_str(s); },
 };
 
-// <COLA_IMPRIME> → , <ELEM_IMPRIME> <COLA_IMPRIME> | ε
 ColaImprime: () = {
     "," ElemImprime ColaImprime => (),
                                 => (),
 };
 
 // ── §4.12  Regresa ────────────────────────────────────────────────────────────
-// <REGRESA> → regresa ( <EXPRESION> ) ;
-// PN12: el tipo de la expresión debe coincidir con el tipo_retorno de la
-// función actual. Además: regresa no se permite en funciones nula ni fuera
-// de una función (en el scope global).
+
 Regresa: () = {
-    "regresa" "(" <e:Expresion> ")" ";" => {
-        sem.validar_regresa(e).expect("PN12: validar regresa");
-    }
+    "regresa" "(" Expresion ")" ";" => { ctx.emit_return(); }
 };
 
 // ── §4.13  Expresiones ────────────────────────────────────────────────────────
-// Jerarquía: EXPRESION > EXP > TERMINO > FACTOR
-// La especificación formal (documento) usa recursión por la derecha (COLA_*)
-// para preservar la propiedad LL(1). Para integrar el cubo semántico de
-// forma natural y propagar tipos de izquierda a derecha, la implementación
-// con LALRPOP usa recursión por la izquierda equivalente (LALRPOP genera
-// un parser LALR(1), que la maneja sin conflicto). El lenguaje reconocido
-// es el mismo.
 
-// <EXPRESION> → <EXP> <COLA_EXPRESION_REL>
-// PN10: si hay operador relacional, se consulta el cubo con el operador y
-// los tipos de ambos operandos. Solo un operador relacional por expresión
-// (no hay encadenamiento).
-Expresion: Tipo = {
-    <l:Exp> <op:OpLogico> <r:Exp> => {
-        sem.validar_operacion(l, r, op).expect("PN10: validar operación relacional")
-    },
-    Exp => <>,
+Expresion: () = {
+    Exp ColaExpresionRel => ()
 };
 
-// <OP_LOGICO> → > | < | != | ==
-OpLogico: TipoOp = {
-    ">"  => TipoOp::Mayor,
-    "<"  => TipoOp::Menor,
-    "!=" => TipoOp::Dif,
-    "==" => TipoOp::Igual,
+ColaExpresionRel: () = {
+    OpLogico Exp => (),
+                 => (),
 };
 
-// <EXP> → <TERMINO> <TERMINO_ADD>
-// PN8: cada suma/resta consulta el cubo y propaga el tipo resultante.
-Exp: Tipo = {
-    <l:Exp> <op:OpAdd> <r:Termino> => {
-        sem.validar_operacion(l, r, op).expect("PN8: validar operación suma/resta")
-    },
-    Termino => <>,
+OpLogico: () = {
+    ">"  => { ctx.push_operator(Op::Gt); },
+    "<"  => { ctx.push_operator(Op::Lt); },
+    "!=" => { ctx.push_operator(Op::Ne); },
+    "==" => { ctx.push_operator(Op::Eq); },
 };
 
-// <OP_ADD> → + | -
-OpAdd: TipoOp = {
-    "+" => TipoOp::Mas,
-    "-" => TipoOp::Menos,
+Exp: () = {
+    Termino TerminoAdd => ()
 };
 
-// <TERMINO> → <FACTOR> <FACTOR_MULT>
-// PN9: cada multiplicación/división consulta el cubo y propaga el tipo.
-Termino: Tipo = {
-    <l:Termino> <op:OpMult> <r:Factor> => {
-        sem.validar_operacion(l, r, op).expect("PN9: validar operación multiplicación/división")
-    },
-    Factor => <>,
+TerminoAdd: () = {
+    OpAdd Termino TerminoAdd => (),
+                             => (),
 };
 
-// <OP_MULT> → * | /
-OpMult: TipoOp = {
-    "*" => TipoOp::Por,
-    "/" => TipoOp::Div,
+OpAdd: () = {
+    "+" => { ctx.push_operator(Op::Add); },
+    "-" => { ctx.push_operator(Op::Sub); },
+};
+
+Termino: () = {
+    Factor FactorMult => ()
+};
+
+FactorMult: () = {
+    OpMult Factor FactorMult => (),
+                             => (),
+};
+
+OpMult: () = {
+    "*" => { ctx.push_operator(Op::Mul); },
+    "/" => { ctx.push_operator(Op::Div); },
 };
 
 // ── §4.14  Factor ─────────────────────────────────────────────────────────────
-// <FACTOR> → ( <EXPRESION> )
-//           | <OP_ADD> <FACTOR>           ← unario + / -
-//           | id <COLA_ID_FACTOR>         ← variable o llamada
-//           | <CTE>
-// PN6 (variable) y PN7 (función): al ver un id se busca primero como
-// función si hay '(' después; si no, como variable con cascada local→global.
-// El signo unario se aplica directamente a un Factor para evitar conflictos
-// con IdOCte y mantener el tipo propagado.
-Factor: Tipo = {
-    "(" <e:Expresion> ")" => e,
-    "+" <f:Factor> => f,
-    "-" <f:Factor> => f,
-    <id:"id"> <call:ColaIdFactor> => {
-        if call {
-            sem.buscar_funcion(&id).expect("PN7: buscar función")
-        } else {
-            sem.buscar_variable(&id).expect("PN6: buscar variable")
-        }
-    },
-    Cte => <>,
+//
+// Tres casos (signo unario y llamadas-como-factor se aplazan a Entrega 4):
+//   · "(" Expresion ")"  — paréntesis de agrupación, fondo falso
+//   · FactorAtomId       — id solo: empuja como operando (resuelve tipo)
+//   · FactorAtomCall     — id(...) como factor: aceptado sintácticamente, sin
+//                          cuádruplos en esta entrega
+//   · Cte                — constante literal
+
+Factor: () = {
+    "(" FactorLParen Expresion ")" FactorRParen => (),
+    FactorAtomId                                => (),
+    FactorAtomCall                              => (),
+    Cte                                         => (),
 };
 
-// <COLA_ID_FACTOR> → <COLA_LLAMADA> | ε
-// Retorna true si hubo llamada (paréntesis), false si fue solo un id (variable).
-// Si después del id viene '(' es una llamada; en caso contrario, solo variable.
-ColaIdFactor: bool = {
-    ColaLlamadaRaw => true,
-                   => false,
+FactorLParen: () = { => { ctx.push_lparen(); } };
+FactorRParen: () = { => { ctx.pop_lparen(); } };
+
+FactorAtomId: () = {
+    <id:"id"> => { ctx.push_id_operand(id); }
+};
+
+FactorAtomCall: () = {
+    "id" "(" ExpresionList ")" => {
+        // Entrega 4: ERA, PARAM, GOSUB. Aceptado sintácticamente.
+    }
 };
 
 // ── §4.15  Constantes ─────────────────────────────────────────────────────────
-// <CTE> → cte_ent | cte_flot
-// Retorna el tipo correspondiente para que se propague en las expresiones.
-Cte: Tipo = {
-    "cte_ent"  => Tipo::Entero,
-    "cte_flot" => Tipo::Flotante,
+
+Cte: () = {
+    <v:"cte_ent">  => { ctx.push_const_int(v); },
+    <v:"cte_flot"> => { ctx.push_const_float(v); },
 };

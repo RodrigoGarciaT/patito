@@ -89,17 +89,14 @@ impl<'input> Lexer<'input> {
 }
 
 impl<'input> Iterator for Lexer<'input> {
-    type Item = Result<(usize, Token, usize), String>;
+    type Item = Result<(usize, Token, usize), LexError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let tok  = self.inner.next()?;      // None = fin de la entrada
         let span = self.inner.span();
         match tok {
             Ok(t)  => Some(Ok((span.start, t, span.end))),
-            Err(_) => {
-                let e = LexError { position: span.start };
-                Some(Err(format!("{}", e)))
-            },
+            Err(_) => Some(Err(LexError { position: span.start })),
         }
     }
 }
