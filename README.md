@@ -101,7 +101,9 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 ### 2. Fila de cuádruplos — programas de prueba
 
-Formato: `índice: (operación, arg1, arg2, resultado)`. Los campos vacíos se imprimen como `_`. Los argumentos son direcciones numéricas: `1000-1999` son globales enteras, `5000-5999` locales enteras, `13000-13999` temporales enteras, `18000-18999` constantes enteras (similar para flotantes con base +1000). El cuádruplo 0 siempre es un `GOTO` que brinca sobre los cuerpos de las funciones hasta el bloque `inicio`.
+Formato: `índice: (operación, arg1, arg2, resultado)`. Los campos vacíos se imprimen como `_`. Los argumentos son direcciones numéricas: `1000-1999` son globales enteras, `5000-5999` locales enteras, `13000-13999` temporales enteras, `18000-18999` constantes enteras (similar para flotantes con base +1000).
+
+**GOTO inicial:** el cuádruplo `0` de todo programa es un `GOTO _ _ N` donde `N` es el índice del primer cuádruplo del bloque `inicio`. Cuando hay funciones declaradas, esos cuerpos van en los cuádruplos `1..N-1`, y el GOTO se encarga de brincarlos para que la ejecución arranque en `inicio` sin caer por accidente dentro de una función. Cuando no hay funciones, el GOTO simplemente salta a `1` (el siguiente cuádruplo).
 
 ```text
 ─── Q01 — asignación con expresión mixta (precedencia) ───
@@ -185,19 +187,19 @@ Formato: `índice: (operación, arg1, arg2, resultado)`. Los campos vacíos se i
 
 ```text
 ─── QF01 — doble(3) + doble(4) (call como factor) ───
-    0: (GOTO     , _     , _     , 4     )    ; brinca a inicio
-    1: (+        , 5000  , 5000  , 13000 )    ; doble: n + n
-    2: (RETURN   , 13000 , _     , 1000  )    ; escribe a return_addr
+    0: (GOTO     , _     , _     , 4     )
+    1: (+        , 5000  , 5000  , 13000 )
+    2: (RETURN   , 13000 , _     , 1000  )
     3: (ENDFUNC  , _     , _     , _     )
-    4: (ERA      , doble , _     , _     )    ; primer doble(3)
-    5: (PARAM    , 18000 , _     , 5000  )    ; 3 → param n
+    4: (ERA      , doble , _     , _     )
+    5: (PARAM    , 18000 , _     , 5000  )
     6: (GOSUB    , doble , _     , 1     )
-    7: (=        , 1000  , _     , 13001 )    ; copy retorno a temp
-    8: (ERA      , doble , _     , _     )    ; segundo doble(4)
-    9: (PARAM    , 18001 , _     , 5000  )    ; 4 → param n
+    7: (=        , 1000  , _     , 13001 )
+    8: (ERA      , doble , _     , _     )
+    9: (PARAM    , 18001 , _     , 5000  )
    10: (GOSUB    , doble , _     , 1     )
    11: (=        , 1000  , _     , 13002 )
-   12: (+        , 13001 , 13002 , 13003 )    ; suma de los dos retornos
+   12: (+        , 13001 , 13002 , 13003 )
    13: (PRINT    , 13003 , _     , _     )
 
 ─── QF02 — saluda() como sentencia (función nula) ───
@@ -210,16 +212,16 @@ Formato: `índice: (operación, arg1, arg2, resultado)`. Los campos vacíos se i
 
 ─── QF03 — suma(2, 3) usada en asignación ───
     0: (GOTO     , _     , _     , 5     )
-    1: (+        , 5000  , 5001  , 13000 )    ; suma: a + b
-    2: (=        , 13000 , _     , 5002  )    ; t = a + b
+    1: (+        , 5000  , 5001  , 13000 )
+    2: (=        , 13000 , _     , 5002  )
     3: (RETURN   , 5002  , _     , 1001  )
     4: (ENDFUNC  , _     , _     , _     )
     5: (ERA      , suma  , _     , _     )
-    6: (PARAM    , 18000 , _     , 5000  )    ; 2 → a
-    7: (PARAM    , 18001 , _     , 5001  )    ; 3 → b
+    6: (PARAM    , 18000 , _     , 5000  )
+    7: (PARAM    , 18001 , _     , 5001  )
     8: (GOSUB    , suma  , _     , 1     )
     9: (=        , 1001  , _     , 13001 )
-   10: (=        , 13001 , _     , 1000  )    ; resultado = ...
+   10: (=        , 13001 , _     , 1000  )
    11: (PRINT    , 1000  , _     , _     )
 
 ─── QF04 — llamada anidada cuadrado(cuadrado(3)) ───
@@ -227,16 +229,18 @@ Formato: `índice: (operación, arg1, arg2, resultado)`. Los campos vacíos se i
     1: (*        , 5000  , 5000  , 13000 )
     2: (RETURN   , 13000 , _     , 1000  )
     3: (ENDFUNC  , _     , _     , _     )
-    4: (ERA      , cuadrado, _   , _     )    ; outer
-    5: (ERA      , cuadrado, _   , _     )    ; inner (pila de llamadas)
-    6: (PARAM    , 18000 , _     , 5000  )    ; inner: 3 → n
+    4: (ERA      , cuadrado, _   , _     )
+    5: (ERA      , cuadrado, _   , _     )
+    6: (PARAM    , 18000 , _     , 5000  )
     7: (GOSUB    , cuadrado, _   , 1     )
     8: (=        , 1000  , _     , 13001 )
-    9: (PARAM    , 13001 , _     , 5000  )    ; outer: temp → n
+    9: (PARAM    , 13001 , _     , 5000  )
    10: (GOSUB    , cuadrado, _   , 1     )
    11: (=        , 1000  , _     , 13002 )
    12: (PRINT    , 13002 , _     , _     )
 ```
+
+En QF01-QF04 el cuádruplo `0` siempre brinca al primer cuádruplo de `inicio`: en QF01 va a `4` (porque el cuerpo de `doble` ocupa los quads `1-3`), en QF02 va a `3` (cuerpo de `saluda` en `1-2`), etc.
 
 ### 4. Directorio de Funciones
 
