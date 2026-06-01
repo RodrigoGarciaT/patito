@@ -24,9 +24,13 @@ impl std::fmt::Display for SemanticError {
 //
 // SemanticContext es el ÚNICO objeto al que llama la gramática. Cuando un
 // punto neurálgico necesita generar cuádruplos, este wrapper:
-//   1. Resuelve datos del scope (tipo de una variable, return_type de la función)
+//   1. Resuelve datos del scope (tipo y dirección de una variable, return_type)
 //   2. Delega la mecánica al QuadGen interno
 //   3. Captura los Result::Err que devuelve QuadGen y los empuja a errors
+//
+// Entrega 4: lookup_var ahora resuelve también la dirección de memoria virtual,
+// y las declaraciones de variables / parámetros invocan a func_dir para alocar
+// direcciones. push_const_int/float pasan por la ConstTable para deduplicar.
 
 pub struct SemanticContext {
     pub func_dir:     FuncDir,
@@ -50,17 +54,19 @@ impl SemanticContext {
     // ── Helpers de scope ──────────────────────────────────────────────────────
 
     /// Busca una variable: primero en el scope local activo, luego en globales.
-    /// Type es Copy, así que retornar por valor evita conflictos de borrow
-    /// cuando luego mutamos self.qg.
-    fn lookup_var(&self, name: &str) -> Option<Type> {
+    /// Devuelve (tipo, dirección) para que el llamador pueda construir un
+    /// Operand listo para empujar a la pila de operandos.
+    /// Type es Copy y u32 también, así que retornar por valor evita conflictos
+    /// de borrow cuando luego mutamos self.qg.
+    fn lookup_var(&self, name: &str) -> Option<(Type, u32)> {
         if let Some(func_name) = self.current_func.as_deref() {
             if let Some(func) = self.func_dir.funcs.get(func_name) {
                 if let Some(v) = func.local_vars.get(name) {
-                    return Some(v.var_type);
+                    return Some((v.var_type, v.address));
                 }
             }
         }
-        self.func_dir.global_vars.get(name).map(|v| v.var_type)
+        self.func_dir.global_vars.get(name).map(|v| (v.var_type, v.address))
     }
 
     fn current_return_type(&self) -> Type {
@@ -76,57 +82,96 @@ impl SemanticContext {
 
     // ═════════════════════════════════════════════════════════════════════════
     //  PUNTOS NEURÁLGICOS — entrega 2 (scope y declaraciones)
+    //  Entrega 4: declare_var y begin_func ahora alocan direcciones de memoria.
     // ═════════════════════════════════════════════════════════════════════════
 
     /// PN1 — inicio de programa.
     pub fn start_program(&mut self, _name: String) {
-        // Reservado para futuras entregas.
+        // Reservado para futuras entregas (GOTO inicial — Parte 2 de Entrega 4).
     }
 
-    /// PN2 — cabecera de función. Registra la función e instala scope local.
+    /// PN2 — cabecera de función. Registra la función, instala scope local,
+    /// resetea contadores de temporales, y asigna direcciones a los parámetros.
     pub fn begin_func(&mut self, name: String, return_type: Type, params: Vec<(String, Type)>) {
         if self.func_dir.funcs.contains_key(&name) {
             self.push_err(format!("Función '{}' declarada más de una vez", name));
         }
 
-        let mut info = FuncInfo::new(return_type, params.clone());
+        // Registrar la función con FuncInfo vacío. Los parámetros se agregan abajo
+        // vía alloc_local, que necesita que la entrada ya exista en el directorio
+        // para poder incrementar los contadores n_local_*.
+        let info = FuncInfo::new(return_type, params.clone());
+        self.func_dir.funcs.insert(name.clone(), info);
+        self.current_func = Some(name.clone());
+
+        // Reset de temporales: cada función empieza desde TEMP_*_BASE.
+        self.qg.reset_temp_counters();
+
+        // Asignar dirección local a cada parámetro (preservando el orden).
         for (pname, ptype) in &params {
-            if info.local_vars.contains_key(pname) {
-                self.push_err(format!("Parámetro '{}' duplicado en función '{}'", pname, name));
+            let dup = self.func_dir.funcs.get(&name)
+                .map(|f| f.local_vars.contains_key(pname)).unwrap_or(false);
+            if dup {
+                self.push_err(format!(
+                    "Parámetro '{}' duplicado en función '{}'", pname, name
+                ));
             } else {
-                info.local_vars.insert(pname.clone(), VarInfo { var_type: *ptype });
+                let addr = self.func_dir.alloc_local(&name, *ptype);
+                if let Some(func) = self.func_dir.funcs.get_mut(&name) {
+                    func.local_vars.insert(
+                        pname.clone(),
+                        VarInfo { var_type: *ptype, address: addr },
+                    );
+                }
             }
         }
-
-        self.func_dir.funcs.insert(name.clone(), info);
-        self.current_func = Some(name);
     }
 
-    /// PN3 — fin de función. Restaura scope global.
+    /// PN3 — fin de función. Guarda el snapshot de temps en el FuncInfo y
+    /// restaura scope global.
     pub fn end_func(&mut self) {
-        self.current_func = None;
+        if let Some(name) = self.current_func.take() {
+            let (ti, tf) = self.qg.take_temp_counts();
+            if let Some(func) = self.func_dir.funcs.get_mut(&name) {
+                func.n_temp_int   = ti;
+                func.n_temp_float = tf;
+            }
+        }
     }
 
-    /// PN4 — declaración de variable.
+    /// PN4 — declaración de variable. Asigna dirección global o local según el
+    /// scope actual.
     pub fn declare_var(&mut self, name: String, var_type: Type) {
         match self.current_func.as_deref() {
             None => {
                 if self.func_dir.global_vars.contains_key(&name) {
-                    self.push_err(format!("Variable global '{}' declarada más de una vez", name));
+                    self.push_err(format!(
+                        "Variable global '{}' declarada más de una vez", name
+                    ));
                 } else {
-                    self.func_dir.global_vars.insert(name, VarInfo { var_type });
+                    let addr = self.func_dir.alloc_global(var_type);
+                    self.func_dir.global_vars.insert(
+                        name,
+                        VarInfo { var_type, address: addr },
+                    );
                 }
             }
             Some(func_name) => {
                 let func_name = func_name.to_owned();
-                if let Some(func) = self.func_dir.funcs.get_mut(&func_name) {
-                    if func.local_vars.contains_key(&name) {
-                        self.push_err(format!(
-                            "Variable '{}' declarada más de una vez en función '{}'",
-                            name, func_name
-                        ));
-                    } else {
-                        func.local_vars.insert(name, VarInfo { var_type });
+                let dup = self.func_dir.funcs.get(&func_name)
+                    .map(|f| f.local_vars.contains_key(&name)).unwrap_or(false);
+                if dup {
+                    self.push_err(format!(
+                        "Variable '{}' declarada más de una vez en función '{}'",
+                        name, func_name
+                    ));
+                } else {
+                    let addr = self.func_dir.alloc_local(&func_name, var_type);
+                    if let Some(func) = self.func_dir.funcs.get_mut(&func_name) {
+                        func.local_vars.insert(
+                            name,
+                            VarInfo { var_type, address: addr },
+                        );
                     }
                 }
             }
@@ -138,27 +183,31 @@ impl SemanticContext {
     //
     //  Patrón común:  el wrapper hace lookups/validaciones de scope,
     //  delega la mecánica al qg, y atrapa cualquier Err.
+    //
+    //  Entrega 4: los operandos ahora llevan dirección en lugar de nombre.
     // ═════════════════════════════════════════════════════════════════════════
 
     // ── Operandos ─────────────────────────────────────────────────────────────
 
     /// PN: id usado como operando (en Factor o como LHS de asignación).
-    /// Resuelve el tipo consultando func_dir antes de empujar.
+    /// Resuelve (tipo, dirección) consultando func_dir antes de empujar.
     pub fn push_id_operand(&mut self, name: String) {
         match self.lookup_var(&name) {
-            Some(ty) => self.qg.push_operand(Operand { name, ty }),
+            Some((ty, address)) => self.qg.push_operand(Operand { address, ty }),
             None => self.push_err(format!("Variable '{}' no declarada", name)),
         }
     }
 
-    /// PN: constante entera literal.
+    /// PN: constante entera literal. Pasa por ConstTable para deduplicar.
     pub fn push_const_int(&mut self, v: i64) {
-        self.qg.push_operand(Operand { name: v.to_string(), ty: Type::Entero });
+        let address = self.func_dir.intern_int(v);
+        self.qg.push_operand(Operand { address, ty: Type::Entero });
     }
 
-    /// PN: constante flotante literal.
+    /// PN: constante flotante literal. Pasa por ConstTable para deduplicar.
     pub fn push_const_float(&mut self, v: f64) {
-        self.qg.push_operand(Operand { name: v.to_string(), ty: Type::Flotante });
+        let address = self.func_dir.intern_float(v);
+        self.qg.push_operand(Operand { address, ty: Type::Flotante });
     }
 
     // ── Operadores ────────────────────────────────────────────────────────────

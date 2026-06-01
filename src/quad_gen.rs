@@ -1,26 +1,30 @@
-use crate::types::Type;
+use crate::types::{Type, TEMP_INT_BASE, TEMP_FLOAT_BASE};
 use crate::semantic_cube::{Op, result_type, is_assignable};
 
 // ── Operando ──────────────────────────────────────────────────────────────────
 //
-// Representa una entrada en la pila de operandos. Combina el nombre (que
+// Representa una entrada en la pila de operandos. Combina la dirección (que
 // aparecerá en los cuádruplos) con su tipo (necesario para consultar el
 // cubo semántico al colapsar).
 //
-// El nombre puede ser:
-//   · un identificador de variable          ("x", "radio")
-//   · una constante literal                  ("5", "3.14")
-//   · un temporal generado por el compilador ("t1", "t2", ...)
+// La dirección puede ser:
+//   · de una variable global o local      (resuelta vía func_dir)
+//   · de una constante literal             (resuelta vía const_table)
+//   · de un temporal generado              (asignada por new_temp)
+//
+// Entrega 4: antes el campo era `name: String` y guardaba nombres como "x",
+// "5" o "t1". Ahora guarda la dirección de memoria virtual correspondiente.
 
 #[derive(Debug, Clone)]
 pub struct Operand {
-    pub name: String,
-    pub ty:   Type,
+    pub address: u32,
+    pub ty:      Type,
 }
 
 // ── Cuádruplo ─────────────────────────────────────────────────────────────────
 //
 // Representación intermedia clásica de cuatro campos: (op, arg1, arg2, result).
+// Los campos siguen siendo `String` (las direcciones se imprimen como números).
 // Los campos vacíos se rellenan con "_". Para saltos pendientes (GOTOF, GOTO)
 // el campo result se inicializa con "___" y se rellena después con el índice
 // del cuádruplo destino (técnica de back-patching).
@@ -53,22 +57,29 @@ const PENDING: &str = "___";
 //
 // Encapsula toda la maquinaria del método clásico de Patito:
 //
-//   · operands   — pila de operandos con su tipo
-//   · operators  — pila de operadores
-//   · jumps      — pila de índices a cuádruplos pendientes de back-patching
-//   · quads      — la fila de cuádruplos emitidos
-//   · temp_counter — contador para nombrar temporales (t1, t2, ...)
+//   · operands     — pila de operandos con su tipo y dirección
+//   · operators    — pila de operadores
+//   · jumps        — pila de índices a cuádruplos pendientes de back-patching
+//   · quads        — la fila de cuádruplos emitidos
+//   · n_temp_int   — contador de temporales enteros usados (per-función)
+//   · n_temp_float — contador de temporales flotantes usados (per-función)
 //
 // QuadGen NO conoce el scope ni la tabla de variables. Los métodos que pueden
 // fallar por tipos devuelven Result<…, String> en lugar de acumular errores;
 // el llamador (SemanticContext) se encarga de capturarlos.
+//
+// Entrega 4: el antiguo `temp_counter` único que producía "t1", "t2"... fue
+// reemplazado por contadores per-tipo que se traducen a direcciones reales en
+// los segmentos TEMP_INT_BASE / TEMP_FLOAT_BASE. Los contadores se reinician al
+// entrar a cada función porque las temporales viven en el activation record.
 
 pub struct QuadGen {
-    operands:     Vec<Operand>,
-    operators:    Vec<Op>,
-    jumps:        Vec<usize>,
-    pub quads:    Vec<Quadruple>,
-    temp_counter: u32,
+    pub operands:     Vec<Operand>,
+    pub operators:    Vec<Op>,
+    pub jumps:        Vec<usize>,
+    pub quads:        Vec<Quadruple>,
+    n_temp_int:       u32,
+    n_temp_float:     u32,
 }
 
 impl Default for QuadGen {
@@ -78,7 +89,8 @@ impl Default for QuadGen {
             operators:    Vec::new(),
             jumps:        Vec::new(),
             quads:        Vec::new(),
-            temp_counter: 0,
+            n_temp_int:   0,
+            n_temp_float: 0,
         }
     }
 }
@@ -88,9 +100,21 @@ impl QuadGen {
 
     // ── Helpers internos ──────────────────────────────────────────────────────
 
-    fn new_temp(&mut self) -> String {
-        self.temp_counter += 1;
-        format!("t{}", self.temp_counter)
+    /// Reserva la siguiente dirección temporal del tipo solicitado.
+    fn new_temp(&mut self, ty: Type) -> u32 {
+        match ty {
+            Type::Entero => {
+                let a = TEMP_INT_BASE + self.n_temp_int;
+                self.n_temp_int += 1;
+                a
+            }
+            Type::Flotante => {
+                let a = TEMP_FLOAT_BASE + self.n_temp_float;
+                self.n_temp_float += 1;
+                a
+            }
+            Type::Nula => unreachable!("temporal de tipo nula"),
+        }
     }
 
     fn fill_jump(&mut self, idx: usize, target: usize) {
@@ -99,9 +123,24 @@ impl QuadGen {
         }
     }
 
+    // ── Manejo de contadores per-función ──────────────────────────────────────
+    //
+    // SemanticContext invoca estos al entrar y salir de cada función:
+    //   reset_temp_counters() en begin_func
+    //   take_temp_counts()    en end_func (para guardar el snapshot en FuncInfo)
+
+    pub fn reset_temp_counters(&mut self) {
+        self.n_temp_int = 0;
+        self.n_temp_float = 0;
+    }
+
+    pub fn take_temp_counts(&self) -> (u32, u32) {
+        (self.n_temp_int, self.n_temp_float)
+    }
+
     // ── Operandos ─────────────────────────────────────────────────────────────
 
-    /// El llamador ya resolvió el tipo (consultando func_dir si era variable).
+    /// El llamador ya resolvió tipo y dirección (consultando func_dir o ConstTable).
     pub fn push_operand(&mut self, operand: Operand) {
         self.operands.push(operand);
     }
@@ -173,9 +212,14 @@ impl QuadGen {
                 "Tipos incompatibles: {} {} {}", left.ty, op, right.ty
             )),
             Some(ty) => {
-                let t = self.new_temp();
-                self.quads.push(Quadruple::new(op, left.name, right.name, t.clone()));
-                self.operands.push(Operand { name: t, ty });
+                let t_addr = self.new_temp(ty);
+                self.quads.push(Quadruple::new(
+                    op,
+                    left.address.to_string(),
+                    right.address.to_string(),
+                    t_addr.to_string(),
+                ));
+                self.operands.push(Operand { address: t_addr, ty });
                 Ok(())
             }
         }
@@ -192,7 +236,12 @@ impl QuadGen {
                 "Asignación incompatible: {} = {}", dest.ty, value.ty
             ));
         }
-        self.quads.push(Quadruple::new(Op::Asig, value.name, "_", dest.name));
+        self.quads.push(Quadruple::new(
+            Op::Asig,
+            value.address.to_string(),
+            "_",
+            dest.address.to_string(),
+        ));
         // La asignación no produce valor: no se empuja resultado.
         Ok(())
     }
@@ -209,7 +258,9 @@ impl QuadGen {
         self.force_collapse()?;
         let operand = self.operands.pop()
             .ok_or_else(|| "Falta operando para escribe".to_string())?;
-        self.quads.push(Quadruple::new(Op::Print, operand.name, "_", "_"));
+        self.quads.push(Quadruple::new(
+            Op::Print, operand.address.to_string(), "_", "_"
+        ));
         Ok(())
     }
 
@@ -223,7 +274,9 @@ impl QuadGen {
         self.force_collapse()?;
         let operand = self.operands.pop()
             .ok_or_else(|| "Falta valor en regresa".to_string())?;
-        self.quads.push(Quadruple::new(Op::Return, operand.name.clone(), "_", "_"));
+        self.quads.push(Quadruple::new(
+            Op::Return, operand.address.to_string(), "_", "_"
+        ));
         Ok(operand)
     }
 
@@ -235,7 +288,9 @@ impl QuadGen {
         self.force_collapse()?;
         let cond = self.operands.pop()
             .ok_or_else(|| "Falta condición".to_string())?;
-        self.quads.push(Quadruple::new(Op::GotoF, cond.name, "_", PENDING));
+        self.quads.push(Quadruple::new(
+            Op::GotoF, cond.address.to_string(), "_", PENDING
+        ));
         self.jumps.push(self.quads.len() - 1);
         Ok(cond.ty)
     }
@@ -304,7 +359,8 @@ impl QuadGen {
     pub fn dump_stacks_if_dirty(&self) {
         if !self.is_clean() {
             eprintln!("  [WARN] pilas auxiliares no quedaron vacías:");
-            eprintln!("    operands:  {:?}", self.operands.iter().map(|o| &o.name).collect::<Vec<_>>());
+            eprintln!("    operands:  {:?}",
+                self.operands.iter().map(|o| o.address).collect::<Vec<_>>());
             eprintln!("    operators: {:?}", self.operators);
             eprintln!("    jumps:     {:?}", self.jumps);
         }
