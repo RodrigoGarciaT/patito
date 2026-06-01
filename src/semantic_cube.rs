@@ -23,6 +23,8 @@ pub enum Op {
     // Solo aparecen en cuádruplos
     Print, PrintStr, Return,
     Goto, GotoF,
+    // Función — Entrega 4 Parte 2
+    Era, Param, Gosub, EndFunc,
 }
 
 impl Op {
@@ -40,6 +42,7 @@ impl Op {
             Op::Mul | Op::Div => 4,
             // No-binarios: no entran a la pila; no se comparan con nadie.
             Op::Print | Op::PrintStr | Op::Return | Op::Goto | Op::GotoF => 0,
+            Op::Era | Op::Param | Op::Gosub | Op::EndFunc => 0,
         }
     }
 
@@ -70,6 +73,10 @@ impl std::fmt::Display for Op {
             Op::Return   => "RETURN",
             Op::Goto     => "GOTO",
             Op::GotoF    => "GOTOF",
+            Op::Era      => "ERA",
+            Op::Param    => "PARAM",
+            Op::Gosub    => "GOSUB",
+            Op::EndFunc  => "ENDFUNC",
         })
     }
 }

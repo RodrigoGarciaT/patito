@@ -68,7 +68,13 @@ ProgramaHead: () = {
 };
 
 pub Programa: () = {
-    ProgramaHead VarsOpt FuncsList "inicio" Cuerpo "fin" => ()
+    ProgramaHead VarsOpt FuncsList MainStart "inicio" Cuerpo "fin" => ()
+};
+
+// PN — entre la lista de funciones y el bloque 'inicio'. Rellena el GOTO
+// inicial (emitido en ProgramaHead) con la posición actual.
+MainStart: () = {
+    => { ctx.patch_main_goto(); }
 };
 
 // ── §4.2  Variables (bloque opcional) ────────────────────────────────────────
@@ -142,7 +148,10 @@ FuncsList: () = {
 };
 
 Funcs: () = {
-    FuncBegin "{" VarsOpt Cuerpo "}" ";" => { ctx.end_func(); }
+    FuncBegin "{" VarsOpt Cuerpo "}" ";" => {
+        ctx.gen_endfunc();
+        ctx.end_func();
+    }
 };
 
 ArgumentList: Vec<(String, Type)> = {
@@ -217,22 +226,34 @@ AsignEq: () = {
     "=" => { ctx.push_operator(Op::Asig); }
 };
 
-// ── §4.8  Llamada a función (placeholder Entrega 4) ──────────────────────────
+// ── §4.8  Llamada a función ──────────────────────────────────────────────────
+//
+// Entrega 4 Parte 2:
+//   CallStmtHead reduce el id ANTES del '(' y emite ERA con el nombre,
+//   manteniendo el contador de la llamada en la pila de SemanticContext.
+//   LALR(1) distingue id→AsignLhs vs id→CallStmtHead por lookahead (= vs ().
 
 CallStmt: () = {
-    "id" "(" ExpresionList ")" ";" => {
-        // Entrega 4: ERA, PARAM, GOSUB. Por ahora se acepta sintácticamente.
-    }
+    CallStmtHead "(" CallArgs ")" ";" => { ctx.gen_gosub_stmt(); }
 };
 
-ExpresionList: () = {
-    Expresion ColaExpresion => (),
-                            => (),
+CallStmtHead: () = {
+    <name:"id"> => { ctx.gen_era(name); }
 };
 
-ColaExpresion: () = {
-    "," Expresion ColaExpresion => (),
-                                => (),
+// Lista de argumentos de una llamada. Cada CallArg emite PARAM al terminar.
+CallArgs: () = {
+    CallArg CallArgsTail => (),
+                         => (),
+};
+
+CallArg: () = {
+    Expresion => { ctx.gen_param(); }
+};
+
+CallArgsTail: () = {
+    "," CallArg CallArgsTail => (),
+                             => (),
 };
 
 // ── §4.9  Condicional ─────────────────────────────────────────────────────────
@@ -369,9 +390,11 @@ FactorAtomId: () = {
 };
 
 FactorAtomCall: () = {
-    "id" "(" ExpresionList ")" => {
-        // Entrega 4: ERA, PARAM, GOSUB. Aceptado sintácticamente.
-    }
+    FactorCallHead "(" CallArgs ")" => { ctx.gen_gosub_factor(); }
+};
+
+FactorCallHead: () = {
+    <name:"id"> => { ctx.gen_era(name); }
 };
 
 // ── §4.15  Constantes ─────────────────────────────────────────────────────────

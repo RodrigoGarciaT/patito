@@ -32,11 +32,25 @@ impl std::fmt::Display for SemanticError {
 // y las declaraciones de variables / parámetros invocan a func_dir para alocar
 // direcciones. push_const_int/float pasan por la ConstTable para deduplicar.
 
+// ── Contexto de una llamada a función ─────────────────────────────────────────
+//
+// Entrega 4 Parte 2: cada vez que se ve `id (` se hace push de un CallCtx en
+// la pila de llamadas, y al cerrar `)` se hace pop. La pila permite llamadas
+// anidadas como `foo(bar(3), 5)`: cuando empieza `bar`, su contador `k` no
+// pisa al de `foo`. El nombre se guarda para validar args y emitir GOSUB.
+
+#[derive(Debug)]
+struct CallCtx {
+    name: String,
+    k:    u32,      // índice 1-based del próximo parámetro a procesar
+}
+
 pub struct SemanticContext {
     pub func_dir:     FuncDir,
     pub errors:       Vec<SemanticError>,
     current_func:     Option<String>,
     pub qg:           QuadGen,
+    call_stack:       Vec<CallCtx>,
 }
 
 impl SemanticContext {
@@ -46,6 +60,7 @@ impl SemanticContext {
             errors:       Vec::new(),
             current_func: None,
             qg:           QuadGen::new(),
+            call_stack:   Vec::new(),
         }
     }
 
@@ -85,22 +100,42 @@ impl SemanticContext {
     //  Entrega 4: declare_var y begin_func ahora alocan direcciones de memoria.
     // ═════════════════════════════════════════════════════════════════════════
 
-    /// PN1 — inicio de programa.
+    /// PN1 — inicio de programa. Emite el GOTO inicial con destino pendiente
+    /// para que la ejecución brinque sobre los cuerpos de las funciones y
+    /// caiga en el bloque 'inicio'. El back-patch se hace en patch_main_goto.
     pub fn start_program(&mut self, _name: String) {
-        // Reservado para futuras entregas (GOTO inicial — Parte 2 de Entrega 4).
+        self.qg.emit_initial_goto();
+    }
+
+    /// PN — rellena el GOTO inicial con la posición actual (primer cuádruplo
+    /// del bloque 'inicio'). Se invoca desde el marker MainStart de la gramática.
+    pub fn patch_main_goto(&mut self) {
+        if let Err(e) = self.qg.patch_main_goto() {
+            self.push_err(e);
+        }
     }
 
     /// PN2 — cabecera de función. Registra la función, instala scope local,
-    /// resetea contadores de temporales, y asigna direcciones a los parámetros.
+    /// resetea contadores de temporales, asigna start_quad y return_addr (si
+    /// no es nula) y asigna direcciones a los parámetros.
     pub fn begin_func(&mut self, name: String, return_type: Type, params: Vec<(String, Type)>) {
         if self.func_dir.funcs.contains_key(&name) {
             self.push_err(format!("Función '{}' declarada más de una vez", name));
         }
 
+        // Reservar la dirección global donde la función escribirá su retorno
+        // (None si la función es nula — no se reserva nada).
+        let return_addr = match return_type {
+            Type::Nula => None,
+            _          => Some(self.func_dir.alloc_global(return_type)),
+        };
+
         // Registrar la función con FuncInfo vacío. Los parámetros se agregan abajo
         // vía alloc_local, que necesita que la entrada ya exista en el directorio
         // para poder incrementar los contadores n_local_*.
-        let info = FuncInfo::new(return_type, params.clone());
+        let mut info = FuncInfo::new(return_type, params.clone());
+        info.start_quad  = self.qg.quads.len();
+        info.return_addr = return_addr;
         self.func_dir.funcs.insert(name.clone(), info);
         self.current_func = Some(name.clone());
 
@@ -254,10 +289,13 @@ impl SemanticContext {
     }
 
     /// PN: regresa(expr). Valida que el tipo del valor sea asignable al
-    /// return_type de la función actual.
+    /// return_type de la función actual y emite RETURN escribiendo a return_addr.
     pub fn emit_return(&mut self) {
         let expected = self.current_return_type();
-        match self.qg.emit_return() {
+        let return_addr = self.current_func.as_deref()
+            .and_then(|f| self.func_dir.funcs.get(f))
+            .and_then(|f| f.return_addr);
+        match self.qg.emit_return(return_addr) {
             Err(e) => self.push_err(e),
             Ok(operand) => {
                 if expected == Type::Nula {
@@ -327,5 +365,160 @@ impl SemanticContext {
         if let Err(e) = self.qg.end_while() {
             self.push_err(e);
         }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  PUNTOS NEURÁLGICOS — entrega 4 parte 2 (cuádruplos de funciones)
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /// PN al cerrar el cuerpo de la función: emite ENDFUNC y restaura scope.
+    /// La emisión va ANTES de end_func() para que el ENDFUNC vea el snapshot
+    /// de temporales correcto.
+    pub fn gen_endfunc(&mut self) {
+        self.qg.emit_endfunc();
+    }
+
+    /// PN al ver el nombre de la función en una llamada (CallStmtHead /
+    /// FactorCallHead). Valida que la función existe, emite ERA, empuja un
+    /// LParen como fondo falso a la pila de operadores (para que el
+    /// force_collapse de cada PARAM no toque operadores de la expresión que
+    /// envuelve a la llamada), y empuja un nuevo CallCtx con k = 1.
+    pub fn gen_era(&mut self, name: String) {
+        if !self.func_dir.funcs.contains_key(&name) {
+            self.push_err(format!("Función '{}' no declarada", name));
+            // Aun así empujamos un CallCtx (y el LParen) para que el resto de
+            // la llamada no explote con "PARAM fuera de llamada". Los PARAMs
+            // y el GOSUB también van a fallar, pero el error ya quedó registrado.
+            self.qg.push_lparen();
+            self.call_stack.push(CallCtx { name, k: 1 });
+            return;
+        }
+        self.qg.emit_era(&name);
+        self.qg.push_lparen();
+        self.call_stack.push(CallCtx { name, k: 1 });
+    }
+
+    /// PN tras evaluar cada argumento de una llamada. Colapsa la expresión,
+    /// hace pop del operando resultante, valida su tipo contra el k-ésimo
+    /// parámetro de la función, emite PARAM con la dirección del parámetro
+    /// destino, y avanza k.
+    pub fn gen_param(&mut self) {
+        if let Err(e) = self.qg.force_collapse() {
+            self.push_err(e);
+            return;
+        }
+        let arg = match self.qg.operands.pop() {
+            Some(o) => o,
+            None    => { self.push_err("Falta argumento en llamada"); return; }
+        };
+
+        // Snapshot inmutable de la información que necesitamos antes de tocar
+        // la pila de llamadas (que tiene borrow mutable).
+        let (name, k) = match self.call_stack.last() {
+            Some(c) => (c.name.clone(), c.k),
+            None    => { self.push_err("PARAM fuera de llamada"); return; }
+        };
+
+        let func = match self.func_dir.funcs.get(&name) {
+            Some(f) => f,
+            None    => { return; /* error ya registrado en gen_era */ }
+        };
+
+        if (k as usize) > func.params.len() {
+            self.push_err(format!(
+                "Demasiados argumentos para '{}': esperaba {}", name, func.params.len()
+            ));
+            return;
+        }
+
+        let (pname, param_ty) = func.params[(k - 1) as usize].clone();
+        let param_addr = match func.local_vars.get(&pname) {
+            Some(v) => v.address,
+            None    => { self.push_err("Parámetro sin dirección"); return; }
+        };
+
+        if !is_assignable(param_ty, arg.ty) {
+            self.push_err(format!(
+                "Argumento {} de '{}': se esperaba {}, se obtuvo {}",
+                k, name, param_ty, arg.ty
+            ));
+        }
+
+        self.qg.emit_param(arg.address, param_addr);
+        if let Some(top) = self.call_stack.last_mut() {
+            top.k += 1;
+        }
+    }
+
+    /// PN al cerrar ')' en CallStmt: hace pop del LParen-fondo-falso, valida
+    /// el número de args, emite GOSUB, y hace pop del CallCtx. No empuja
+    /// operando (es sentencia).
+    pub fn gen_gosub_stmt(&mut self) {
+        // Pop del LParen empujado por gen_era. Cualquier operador sobrante
+        // dentro de la llamada (no debería haber ninguno gracias a los
+        // gen_param previos) se colapsaría aquí.
+        if let Err(e) = self.qg.pop_lparen() {
+            self.push_err(e);
+        }
+        let ctx = match self.call_stack.pop() {
+            Some(c) => c,
+            None    => { self.push_err("GOSUB fuera de llamada"); return; }
+        };
+        let (start, expected) = match self.func_dir.funcs.get(&ctx.name) {
+            Some(f) => (f.start_quad, f.params.len() as u32),
+            None    => return, // error ya registrado en gen_era
+        };
+        let got = ctx.k - 1;
+        if got != expected {
+            self.push_err(format!(
+                "'{}' espera {} argumentos, recibió {}", ctx.name, expected, got
+            ));
+        }
+        self.qg.emit_gosub(&ctx.name, start);
+    }
+
+    /// PN al cerrar ')' en FactorAtomCall: igual que gen_gosub_stmt + copia el
+    /// valor de retorno a un temporal y lo empuja a la pila de operandos para
+    /// que la expresión externa lo use.
+    pub fn gen_gosub_factor(&mut self) {
+        // Pop del LParen empujado por gen_era (igual que gen_gosub_stmt).
+        if let Err(e) = self.qg.pop_lparen() {
+            self.push_err(e);
+        }
+        let ctx = match self.call_stack.pop() {
+            Some(c) => c,
+            None    => { self.push_err("GOSUB fuera de llamada"); return; }
+        };
+
+        let (start, return_addr, return_type, expected) = match self.func_dir.funcs.get(&ctx.name) {
+            Some(f) => (f.start_quad, f.return_addr, f.return_type, f.params.len() as u32),
+            None    => return, // error ya registrado en gen_era
+        };
+
+        // Validación de número de args (idéntica a gen_gosub_stmt).
+        let got = ctx.k - 1;
+        if got != expected {
+            self.push_err(format!(
+                "'{}' espera {} argumentos, recibió {}", ctx.name, expected, got
+            ));
+        }
+
+        // Si la función es nula no produce valor, no se puede usar como factor.
+        let (addr, ty) = match (return_addr, return_type) {
+            (Some(a), t) if t != Type::Nula => (a, t),
+            _ => {
+                self.push_err(format!(
+                    "Función nula '{}' no puede usarse en una expresión", ctx.name
+                ));
+                // Aun así emitimos el GOSUB para mantener el contador de
+                // cuádruplos consistente; el error queda registrado.
+                self.qg.emit_gosub(&ctx.name, start);
+                return;
+            }
+        };
+
+        self.qg.emit_gosub(&ctx.name, start);
+        // Copia return_addr → temporal nuevo, push temporal.
+        let _ = self.qg.emit_return_value_copy(addr, ty);
     }
 }

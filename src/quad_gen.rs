@@ -101,7 +101,9 @@ impl QuadGen {
     // ── Helpers internos ──────────────────────────────────────────────────────
 
     /// Reserva la siguiente dirección temporal del tipo solicitado.
-    fn new_temp(&mut self, ty: Type) -> u32 {
+    /// Público para que SemanticContext genere el temporal del valor de
+    /// retorno tras un GOSUB (FactorAtomCall).
+    pub fn new_temp(&mut self, ty: Type) -> u32 {
         match ty {
             Type::Entero => {
                 let a = TEMP_INT_BASE + self.n_temp_int;
@@ -270,14 +272,77 @@ impl QuadGen {
 
     /// Devuelve el Operand consumido para que el llamador valide su tipo
     /// contra el return_type esperado de la función actual.
-    pub fn emit_return(&mut self) -> Result<Operand, String> {
+    /// Entrega 4 Parte 2: el campo result del cuádruplo guarda la return_addr
+    /// global de la función (o "_" si la función es nula, lo cual sería un
+    /// error semántico que el llamador atrapa por separado).
+    pub fn emit_return(&mut self, return_addr: Option<u32>) -> Result<Operand, String> {
         self.force_collapse()?;
         let operand = self.operands.pop()
             .ok_or_else(|| "Falta valor en regresa".to_string())?;
+        let result = return_addr.map(|a| a.to_string()).unwrap_or_else(|| "_".into());
         self.quads.push(Quadruple::new(
-            Op::Return, operand.address.to_string(), "_", "_"
+            Op::Return, operand.address.to_string(), "_", result
         ));
         Ok(operand)
+    }
+
+    // ── Funciones (Entrega 4 Parte 2) ─────────────────────────────────────────
+
+    /// Emite el GOTO inicial del programa con destino pendiente y lo deja en
+    /// la pila de jumps para que el patch_main_goto lo resuelva al entrar a
+    /// 'inicio'. Sin este salto, la ejecución caería en el cuerpo de la
+    /// primera función declarada antes de llegar al bloque principal.
+    pub fn emit_initial_goto(&mut self) {
+        self.quads.push(Quadruple::new(Op::Goto, "_", "_", PENDING));
+        self.jumps.push(self.quads.len() - 1);
+    }
+
+    /// Rellena el GOTO inicial con la posición actual (primer cuádruplo del
+    /// bloque 'inicio'). Se invoca en el marker MainStart de la gramática.
+    pub fn patch_main_goto(&mut self) -> Result<(), String> {
+        let idx = self.jumps.pop()
+            .ok_or_else(|| "GOTO inicial no presente en jumps".to_string())?;
+        let target = self.quads.len();
+        self.fill_jump(idx, target);
+        Ok(())
+    }
+
+    /// Emite ENDFUNC al cerrar el cuerpo de una función. La VM la usa para
+    /// liberar el activation record y devolver el control al punto de llamada.
+    pub fn emit_endfunc(&mut self) {
+        self.quads.push(Quadruple::new(Op::EndFunc, "_", "_", "_"));
+    }
+
+    /// Emite ERA al iniciar una llamada a función (antes de evaluar args).
+    pub fn emit_era(&mut self, name: &str) {
+        self.quads.push(Quadruple::new(Op::Era, name.to_string(), "_", "_"));
+    }
+
+    /// Emite PARAM con la dirección del operando y el slot de parámetro destino.
+    pub fn emit_param(&mut self, arg_addr: u32, param_addr: u32) {
+        self.quads.push(Quadruple::new(
+            Op::Param, arg_addr.to_string(), "_", param_addr.to_string()
+        ));
+    }
+
+    /// Emite GOSUB con el nombre de la función y el índice del cuádruplo destino.
+    pub fn emit_gosub(&mut self, name: &str, start_quad: usize) {
+        self.quads.push(Quadruple::new(
+            Op::Gosub, name.to_string(), "_", start_quad.to_string()
+        ));
+    }
+
+    /// Tras un GOSUB usado como factor, copia el valor escrito por la función
+    /// llamada (en su return_addr) a un temporal nuevo y empuja el temporal a
+    /// la pila de operandos. Esto permite usar el retorno en expresiones más
+    /// grandes y evita que llamadas sucesivas se pisen el return_addr.
+    pub fn emit_return_value_copy(&mut self, return_addr: u32, ty: Type) -> u32 {
+        let t = self.new_temp(ty);
+        self.quads.push(Quadruple::new(
+            Op::Asig, return_addr.to_string(), "_", t.to_string()
+        ));
+        self.operands.push(Operand { address: t, ty });
+        t
     }
 
     // ── Control de flujo (jumps) ──────────────────────────────────────────────

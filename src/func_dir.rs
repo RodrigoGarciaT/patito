@@ -21,10 +21,12 @@ pub struct VarInfo {
 //
 // Entrega 4: además del tipo de retorno, la lista ordenada de parámetros y la
 // tabla local de variables, cada función guarda:
-//   · start_quad     — índice del primer cuádruplo del cuerpo (futuro GOSUB).
+//   · start_quad     — índice del primer cuádruplo del cuerpo (destino del GOSUB).
 //   · n_local_*      — contadores de variables locales por tipo (para ERA).
 //   · n_temp_*       — contadores de temporales por tipo (snapshot al cerrar
 //                      la función desde QuadGen).
+//   · return_addr    — dirección global donde RETURN escribe el valor de retorno
+//                      (None si la función es nula).
 
 #[derive(Debug, Clone)]
 pub struct FuncInfo {
@@ -38,6 +40,7 @@ pub struct FuncInfo {
     pub n_local_float: u32,
     pub n_temp_int:    u32,
     pub n_temp_float:  u32,
+    pub return_addr:   Option<u32>,
 }
 
 impl FuncInfo {
@@ -51,6 +54,7 @@ impl FuncInfo {
             n_local_float: 0,
             n_temp_int:    0,
             n_temp_float:  0,
+            return_addr:   None,
         }
     }
 }
@@ -232,6 +236,9 @@ impl FuncDir {
                 .join(", ");
             println!("\n  [función '{}']", fname);
             println!("  Retorna   : {}", info.return_type);
+            if let Some(addr) = info.return_addr {
+                println!("  Return @  : {}", addr);
+            }
             println!("  Parámetros: ({})", params_str);
             println!(
                 "  Recursos  : locals(int={}, float={}) temps(int={}, float={}) start_quad={}",

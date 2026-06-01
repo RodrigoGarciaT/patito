@@ -1,4 +1,29 @@
-# Como correr el programa
+# Patito — Compilador
+
+Compilador del lenguaje **Patito** escrito en Rust. Lexer con [logos](https://github.com/maciejhirsz/logos), parser con [LALRPOP](https://github.com/lalrpop/lalrpop), análisis semántico con cubo + directorio de funciones, y generación de código intermedio en forma de cuádruplos con direcciones de memoria virtual.
+
+## Entregas implementadas
+
+- **Entrega 1:** Scanner (logos) + Parser (LALRPOP).
+- **Entrega 2:** Cubo semántico + Directorio de Funciones + Tablas de Variables.
+- **Entrega 3:** Generación de cuádruplos para estatutos lineales y control de flujo (si/sino, mientras, escribe, regresa) con pilas de operadores/operandos/jumps y back-patching.
+- **Entrega 4 — Parte 1:** Traducción de variables, constantes y temporales a direcciones de memoria virtual + tabla de constantes con deduplicación.
+- **Entrega 4 — Parte 2:** Cuádruplos de declaración e invocación de funciones (`ERA`, `PARAM`, `GOSUB`, `ENDFUNC`, `RETURN` con `return_addr`) + GOTO inicial del programa.
+
+## Distribución de memoria virtual
+
+Cada segmento tiene 1000 direcciones reservadas:
+
+| Segmento     | Entero | Flotante |
+|--------------|--------|----------|
+| Globales     | 1000   | 2000     |
+| Locales      | 5000   | 6000     |
+| Temporales   | 13000  | 14000    |
+| Constantes   | 18000  | 19000    |
+
+Las globales y constantes persisten todo el programa. Las locales y temporales se reinician al entrar a cada función (viven en el activation record).
+
+## Cómo correr el programa
 
 1. Instala Rust:
 
@@ -6,27 +31,34 @@
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-2. Verifica la instalacion:
+2. Verifica la instalación:
 
 ```bash
 cargo --version
 rustc --version
 ```
 
-3. Abre una terminal.
-4. Entra a la carpeta del proyecto:
+3. Entra a la carpeta del proyecto:
 
 ```bash
 cd patito
 ```
 
-5. Ejecuta el programa:
+4. Ejecuta el programa:
 
 ```bash
 cargo run
 ```
 
-Al final debe aparecer una salida como esta, indicando que todas las pruebas pasaron:
+Si sale "command not found: cargo", ejecuta esto y vuelve a intentarlo:
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+## Salida esperada
+
+### 1. Validación semántica — 17 casos
 
 ```text
 ═══════════════════════════════════════════════════════════════
@@ -67,217 +99,201 @@ Al final debe aparecer una salida como esta, indicando que todas las pruebas pas
 ═══════════════════════════════════════════════════════════════
 ```
 
-Después de los tests, el programa imprime la **fila de cuádruplos** generada para 11 programas de prueba. Cada renglón tiene el formato `índice: (operación, arg1, arg2, resultado)`. Los campos vacíos se imprimen como `_`. Los saltos (`GOTO`, `GOTOF`) usan el campo `resultado` como el índice destino dentro de la fila.
+### 2. Fila de cuádruplos — programas de prueba
+
+Formato: `índice: (operación, arg1, arg2, resultado)`. Los campos vacíos se imprimen como `_`. Los argumentos son direcciones numéricas: `1000-1999` son globales enteras, `5000-5999` locales enteras, `13000-13999` temporales enteras, `18000-18999` constantes enteras (similar para flotantes con base +1000). El cuádruplo 0 siempre es un `GOTO` que brinca sobre los cuerpos de las funciones hasta el bloque `inicio`.
 
 ```text
 ─── Q01 — asignación con expresión mixta (precedencia) ───
-  ┌──────────────────────────────────────────────────────┐
-  │  FILA DE CUÁDRUPLOS                                  │
-  └──────────────────────────────────────────────────────┘
-    0: (=        , 2     , _     , a     )
-    1: (=        , 3     , _     , b     )
-    2: (=        , 4     , _     , c     )
-    3: (*        , b     , c     , t1    )
-    4: (+        , a     , t1    , t2    )
-    5: (=        , t2    , _     , x     )
-
+    0: (GOTO     , _     , _     , 1     )
+    1: (=        , 18000 , _     , 1000  )
+    2: (=        , 18001 , _     , 1001  )
+    3: (=        , 18002 , _     , 1002  )
+    4: (*        , 1001  , 1002  , 13000 )
+    5: (+        , 1000  , 13000 , 13001 )
+    6: (=        , 13001 , _     , 1003  )
 
 ─── Q02 — paréntesis cambian precedencia ───
-  ┌──────────────────────────────────────────────────────┐
-  │  FILA DE CUÁDRUPLOS                                  │
-  └──────────────────────────────────────────────────────┘
-    0: (=        , 2     , _     , a     )
-    1: (=        , 3     , _     , b     )
-    2: (=        , 4     , _     , c     )
-    3: (+        , a     , b     , t1    )
-    4: (*        , t1    , c     , t2    )
-    5: (=        , t2    , _     , x     )
-
+    0: (GOTO     , _     , _     , 1     )
+    1: (=        , 18000 , _     , 1000  )
+    2: (=        , 18001 , _     , 1001  )
+    3: (=        , 18002 , _     , 1002  )
+    4: (+        , 1000  , 1001  , 13000 )
+    5: (*        , 13000 , 1002  , 13001 )
+    6: (=        , 13001 , _     , 1003  )
 
 ─── Q03 — área del círculo (mezcla entero/flotante) ───
-  ┌──────────────────────────────────────────────────────┐
-  │  FILA DE CUÁDRUPLOS                                  │
-  └──────────────────────────────────────────────────────┘
-    0: (=        , 5     , _     , radio )
-    1: (*        , 3.14159, radio , t1    )
-    2: (*        , t1    , radio , t2    )
-    3: (=        , t2    , _     , area  )
-    4: (PRINT_STR, "Radio: ", _     , _     )
-    5: (PRINT    , radio , _     , _     )
-    6: (PRINT_STR, "Area: ", _     , _     )
-    7: (PRINT    , area  , _     , _     )
-
+    0: (GOTO     , _     , _     , 1     )
+    1: (=        , 18000 , _     , 1000  )
+    2: (*        , 19000 , 1000  , 14000 )
+    3: (*        , 14000 , 1000  , 14001 )
+    4: (=        , 14001 , _     , 2000  )
+    5: (PRINT_STR, "Radio: ", _     , _     )
+    6: (PRINT    , 1000  , _     , _     )
+    7: (PRINT_STR, "Area: ", _     , _     )
+    8: (PRINT    , 2000  , _     , _     )
 
 ─── Q04 — si/sino (mayor de dos) ───
-  ┌──────────────────────────────────────────────────────┐
-  │  FILA DE CUÁDRUPLOS                                  │
-  └──────────────────────────────────────────────────────┘
-    0: (=        , 15    , _     , x     )
-    1: (=        , 8     , _     , y     )
-    2: (>        , x     , y     , t1    )
-    3: (GOTOF    , t1    , _     , 6     )
-    4: (PRINT    , x     , _     , _     )
-    5: (GOTO     , _     , _     , 7     )
-    6: (PRINT    , y     , _     , _     )
-
+    0: (GOTO     , _     , _     , 1     )
+    1: (=        , 18000 , _     , 1000  )
+    2: (=        , 18001 , _     , 1001  )
+    3: (>        , 1000  , 1001  , 13000 )
+    4: (GOTOF    , 13000 , _     , 7     )
+    5: (PRINT    , 1000  , _     , _     )
+    6: (GOTO     , _     , _     , 8     )
+    7: (PRINT    , 1001  , _     , _     )
 
 ─── Q05 — si sin sino ───
-  ┌──────────────────────────────────────────────────────┐
-  │  FILA DE CUÁDRUPLOS                                  │
-  └──────────────────────────────────────────────────────┘
-    0: (=        , 10    , _     , x     )
-    1: (>        , x     , 0     , t1    )
-    2: (GOTOF    , t1    , _     , 4     )
-    3: (PRINT_STR, "positivo", _     , _     )
-
+    0: (GOTO     , _     , _     , 1     )
+    1: (=        , 18000 , _     , 1000  )
+    2: (>        , 1000  , 18001 , 13000 )
+    3: (GOTOF    , 13000 , _     , 5     )
+    4: (PRINT_STR, "positivo", _     , _     )
 
 ─── Q06 — while (factorial) ───
-  ┌──────────────────────────────────────────────────────┐
-  │  FILA DE CUÁDRUPLOS                                  │
-  └──────────────────────────────────────────────────────┘
-    0: (=        , 5     , _     , n     )
-    1: (=        , 1     , _     , fact  )
-    2: (=        , 1     , _     , i     )
-    3: (<        , i     , n     , t1    )
-    4: (GOTOF    , t1    , _     , 10    )
-    5: (+        , i     , 1     , t2    )
-    6: (=        , t2    , _     , i     )
-    7: (*        , fact  , i     , t3    )
-    8: (=        , t3    , _     , fact  )
-    9: (GOTO     , _     , _     , 3     )
-   10: (PRINT_STR, "Factorial: ", _     , _     )
-   11: (PRINT    , fact  , _     , _     )
-
-
-─── Q07 — Fibonacci (while + múltiples asignaciones) ───
-  ┌──────────────────────────────────────────────────────┐
-  │  FILA DE CUÁDRUPLOS                                  │
-  └──────────────────────────────────────────────────────┘
-    0: (=        , 10    , _     , n     )
-    1: (=        , 0     , _     , a     )
-    2: (=        , 1     , _     , b     )
-    3: (=        , 0     , _     , i     )
-    4: (<        , i     , n     , t1    )
-    5: (GOTOF    , t1    , _     , 14    )
-    6: (PRINT    , a     , _     , _     )
-    7: (+        , a     , b     , t2    )
-    8: (=        , t2    , _     , temp  )
-    9: (=        , b     , _     , a     )
-   10: (=        , temp  , _     , b     )
-   11: (+        , i     , 1     , t3    )
-   12: (=        , t3    , _     , i     )
-   13: (GOTO     , _     , _     , 4     )
-
-
-─── Q08 — si anidado dentro de while ───
-  ┌──────────────────────────────────────────────────────┐
-  │  FILA DE CUÁDRUPLOS                                  │
-  └──────────────────────────────────────────────────────┘
-    0: (=        , 0     , _     , i     )
-    1: (=        , 0     , _     , par   )
-    2: (<        , i     , 10    , t1    )
-    3: (GOTOF    , t1    , _     , 14    )
-    4: (<        , i     , 5     , t2    )
-    5: (GOTOF    , t2    , _     , 9     )
-    6: (+        , par   , i     , t3    )
-    7: (=        , t3    , _     , par   )
-    8: (GOTO     , _     , _     , 11    )
-    9: (-        , par   , i     , t4    )
-   10: (=        , t4    , _     , par   )
-   11: (+        , i     , 1     , t5    )
-   12: (=        , t5    , _     , i     )
-   13: (GOTO     , _     , _     , 2     )
-   14: (PRINT_STR, "Resultado: ", _     , _     )
-   15: (PRINT    , par   , _     , _     )
-
-
-─── Q09 — relacionales y aritmética combinadas ───
-  ┌──────────────────────────────────────────────────────┐
-  │  FILA DE CUÁDRUPLOS                                  │
-  └──────────────────────────────────────────────────────┘
-    0: (=        , 1     , _     , a     )
-    1: (=        , 2     , _     , b     )
-    2: (=        , 3     , _     , c     )
-    3: (*        , b     , c     , t1    )
-    4: (+        , a     , t1    , t2    )
-    5: (+        , c     , b     , t3    )
-    6: (==       , t2    , t3    , t4    )
-    7: (=        , t4    , _     , r     )
-    8: (PRINT    , r     , _     , _     )
-
+    0: (GOTO     , _     , _     , 1     )
+    1: (=        , 18000 , _     , 1000  )
+    2: (=        , 18001 , _     , 1001  )
+    3: (=        , 18001 , _     , 1002  )
+    4: (<        , 1002  , 1000  , 13000 )
+    5: (GOTOF    , 13000 , _     , 11    )
+    6: (+        , 1002  , 18001 , 13001 )
+    7: (=        , 13001 , _     , 1002  )
+    8: (*        , 1001  , 1002  , 13002 )
+    9: (=        , 13002 , _     , 1001  )
+   10: (GOTO     , _     , _     , 4     )
+   11: (PRINT_STR, "Factorial: ", _     , _     )
+   12: (PRINT    , 1001  , _     , _     )
 
 ─── Q10 — regresa con cálculo ───
-  ┌──────────────────────────────────────────────────────┐
-  │  FILA DE CUÁDRUPLOS                                  │
-  └──────────────────────────────────────────────────────┘
-    0: (*        , n     , n     , t1    )
-    1: (RETURN   , t1    , _     , _     )
-    2: (PRINT_STR, "cuadrado de 7", _     , _     )
-
+    0: (GOTO     , _     , _     , 4     )
+    1: (*        , 5000  , 5000  , 13000 )
+    2: (RETURN   , 13000 , _     , 1000  )
+    3: (ENDFUNC  , _     , _     , _     )
+    4: (PRINT_STR, "cuadrado de 7", _     , _     )
 
 ─── Q11 — STRESS TEST: ciclos anidados, ifs encadenados, mezcla de tipos ───
-  ┌──────────────────────────────────────────────────────┐
-  │  FILA DE CUÁDRUPLOS                                  │
-  └──────────────────────────────────────────────────────┘
-    0: (=        , 10    , _     , n     )
-    1: (=        , 1     , _     , i     )
-    2: (=        , 0     , _     , suma  )
-    3: (=        , 1     , _     , prod  )
-    4: (=        , 0     , _     , max   )
-    5: (=        , 100   , _     , min   )
-    6: (=        , 0     , _     , contador)
-    7: (=        , 1.5   , _     , escala)
-    8: (<        , i     , n     , t1    )
-    9: (GOTOF    , t1    , _     , 34    )
-   10: (+        , suma  , i     , t2    )
-   11: (=        , t2    , _     , suma  )
-   12: (*        , prod  , i     , t3    )
-   13: (=        , t3    , _     , prod  )
-   14: (>        , i     , max   , t4    )
-   15: (GOTOF    , t4    , _     , 17    )
-   16: (=        , i     , _     , max   )
-   17: (<        , i     , min   , t5    )
-   18: (GOTOF    , t5    , _     , 21    )
-   19: (=        , i     , _     , min   )
-   20: (GOTO     , _     , _     , 23    )
-   21: (+        , contador, 1     , t6    )
-   22: (=        , t6    , _     , contador)
-   23: (=        , 0     , _     , j     )
-   24: (<        , j     , i     , t7    )
-   25: (GOTOF    , t7    , _     , 31    )
-   26: (+        , suma  , 1     , t8    )
-   27: (=        , t8    , _     , suma  )
-   28: (+        , j     , 1     , t9    )
-   29: (=        , t9    , _     , j     )
-   30: (GOTO     , _     , _     , 24    )
-   31: (+        , i     , 1     , t10   )
-   32: (=        , t10   , _     , i     )
-   33: (GOTO     , _     , _     , 8     )
-   34: (*        , suma  , escala, t11   )
-   35: (=        , t11   , _     , promedio)
-   36: (>        , suma  , prod  , t12   )
-   37: (GOTOF    , t12   , _     , 41    )
-   38: (PRINT_STR, "suma mayor: ", _     , _     )
-   39: (PRINT    , suma  , _     , _     )
-   40: (GOTO     , _     , _     , 47    )
-   41: (==       , suma  , prod  , t13   )
-   42: (GOTOF    , t13   , _     , 45    )
-   43: (PRINT_STR, "iguales", _     , _     )
-   44: (GOTO     , _     , _     , 47    )
-   45: (PRINT_STR, "prod mayor: ", _     , _     )
-   46: (PRINT    , prod  , _     , _     )
-   47: (PRINT_STR, "max: ", _     , _     )
-   48: (PRINT    , max   , _     , _     )
-   49: (PRINT_STR, "min: ", _     , _     )
-   50: (PRINT    , min   , _     , _     )
-   51: (PRINT_STR, "contador: ", _     , _     )
-   52: (PRINT    , contador, _     , _     )
-   53: (PRINT_STR, "promedio: ", _     , _     )
-   54: (PRINT    , promedio, _     , _     )
+    0: (GOTO     , _     , _     , 1     )
+    1: (=        , 18000 , _     , 1000  )
+    ...
+   55: (PRINT    , 2000  , _     , _     )
 ```
 
-Si sale "command not found: cargo", ejecuta esto y vuelve a correr cargo run:
+(Q07, Q08, Q09, Q11 completos se imprimen al ejecutar — están omitidos del README por brevedad.)
 
-```bash
-export PATH="$HOME/.cargo/bin:$PATH"
+### 3. Cuádruplos de funciones (Entrega 4 Parte 2)
+
+```text
+─── QF01 — doble(3) + doble(4) (call como factor) ───
+    0: (GOTO     , _     , _     , 4     )    ; brinca a inicio
+    1: (+        , 5000  , 5000  , 13000 )    ; doble: n + n
+    2: (RETURN   , 13000 , _     , 1000  )    ; escribe a return_addr
+    3: (ENDFUNC  , _     , _     , _     )
+    4: (ERA      , doble , _     , _     )    ; primer doble(3)
+    5: (PARAM    , 18000 , _     , 5000  )    ; 3 → param n
+    6: (GOSUB    , doble , _     , 1     )
+    7: (=        , 1000  , _     , 13001 )    ; copy retorno a temp
+    8: (ERA      , doble , _     , _     )    ; segundo doble(4)
+    9: (PARAM    , 18001 , _     , 5000  )    ; 4 → param n
+   10: (GOSUB    , doble , _     , 1     )
+   11: (=        , 1000  , _     , 13002 )
+   12: (+        , 13001 , 13002 , 13003 )    ; suma de los dos retornos
+   13: (PRINT    , 13003 , _     , _     )
+
+─── QF02 — saluda() como sentencia (función nula) ───
+    0: (GOTO     , _     , _     , 3     )
+    1: (PRINT_STR, "hola", _     , _     )
+    2: (ENDFUNC  , _     , _     , _     )
+    3: (ERA      , saluda, _     , _     )
+    4: (GOSUB    , saluda, _     , 1     )
+    5: (PRINT_STR, "fin" , _     , _     )
+
+─── QF03 — suma(2, 3) usada en asignación ───
+    0: (GOTO     , _     , _     , 5     )
+    1: (+        , 5000  , 5001  , 13000 )    ; suma: a + b
+    2: (=        , 13000 , _     , 5002  )    ; t = a + b
+    3: (RETURN   , 5002  , _     , 1001  )
+    4: (ENDFUNC  , _     , _     , _     )
+    5: (ERA      , suma  , _     , _     )
+    6: (PARAM    , 18000 , _     , 5000  )    ; 2 → a
+    7: (PARAM    , 18001 , _     , 5001  )    ; 3 → b
+    8: (GOSUB    , suma  , _     , 1     )
+    9: (=        , 1001  , _     , 13001 )
+   10: (=        , 13001 , _     , 1000  )    ; resultado = ...
+   11: (PRINT    , 1000  , _     , _     )
+
+─── QF04 — llamada anidada cuadrado(cuadrado(3)) ───
+    0: (GOTO     , _     , _     , 4     )
+    1: (*        , 5000  , 5000  , 13000 )
+    2: (RETURN   , 13000 , _     , 1000  )
+    3: (ENDFUNC  , _     , _     , _     )
+    4: (ERA      , cuadrado, _   , _     )    ; outer
+    5: (ERA      , cuadrado, _   , _     )    ; inner (pila de llamadas)
+    6: (PARAM    , 18000 , _     , 5000  )    ; inner: 3 → n
+    7: (GOSUB    , cuadrado, _   , 1     )
+    8: (=        , 1000  , _     , 13001 )
+    9: (PARAM    , 13001 , _     , 5000  )    ; outer: temp → n
+   10: (GOSUB    , cuadrado, _   , 1     )
+   11: (=        , 1000  , _     , 13002 )
+   12: (PRINT    , 13002 , _     , _     )
+```
+
+### 4. Directorio de Funciones
+
+```text
+[scope global]
+Variables globales:
+  a                : entero @ 1000
+  b                : entero @ 1001
+
+[tabla de constantes]
+  3          : entero    @ 18000
+  4          : entero    @ 18001
+
+[función 'cuadrado']
+Retorna   : entero
+Return @  : 1002
+Parámetros: (n: entero @ 5000)
+Recursos  : locals(int=1, float=0) temps(int=1, float=0) start_quad=1
+
+[función 'potenciaCuatro']
+Retorna   : entero
+Return @  : 1003
+Parámetros: (n: entero @ 5000)
+Recursos  : locals(int=2, float=0) temps(int=0, float=0) start_quad=4
+Vars locales (excluye parámetros):
+  cuad             : entero @ 5001
+```
+
+### 5. Cubo semántico
+
+```text
+Tabla de resultados de tipo — (izquierda) OP (derecha)
+E = entero  F = flotante  - = error de tipos
+
+izquierda \ OP        +   -   *   /   >   <   !=  ==
+─────────────────────────────────────────────────────
+entero op entero      E   E   E   E   E   E   E   E
+entero op flotante    F   F   F   F   E   E   E   E
+flotante op entero    F   F   F   F   E   E   E   E
+flotante op flotante  F   F   F   F   E   E   E   E
+
+Compatibilidad de asignación (variable : TO = FROM)
+TO \ FROM         entero    flotante
+entero            OK        Error
+flotante          OK        OK
+```
+
+## Estructura del código
+
+```
+src/
+├── lexer.rs          — Tokens y adapter logos → LALRPOP
+├── grammar.lalrpop   — Gramática LALR(1) con acciones embebidas (PNs)
+├── types.rs          — Type enum + bases de segmentos de memoria
+├── semantic_cube.rs  — Op enum, result_type, is_assignable, precedencias
+├── func_dir.rs       — VarInfo, FuncInfo, ConstTable, FuncDir + helpers de direcciones
+├── quad_gen.rs       — Operand, Quadruple, QuadGen (3 pilas + fila + contadores temps)
+├── context.rs        — SemanticContext: wrapper que coordina scope + qg + errores
+└── main.rs           — 17 tests de validación + 11 programas de cuádruplos + 4 tests de funciones
 ```

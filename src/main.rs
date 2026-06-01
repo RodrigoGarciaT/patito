@@ -474,6 +474,72 @@ fn main() {
            fin"#
     );
 
+    // ── Cuádruplos de funciones (Entrega 4 Parte 2) ──────────────────────────
+    println!();
+    println!("═══════════════════════════════════════════════════════════════");
+    println!("  Fila de cuádruplos — funciones (Entrega 4 Parte 2)");
+    println!("═══════════════════════════════════════════════════════════════");
+
+    // QF01 — llamada como factor con valor de retorno usado en expresión.
+    // Cubre: GOTO inicial, ERA/PARAM/GOSUB, RETURN con return_addr,
+    // copy-to-temp del retorno, dos llamadas a la misma función dentro de
+    // una expresión (evita pisar return_addr gracias al copy-to-temp).
+    show_quads("QF01 — doble(3) + doble(4) (call como factor)",
+        r#"programa fcalls;
+           entero doble(n : entero) {
+               { regresa(n + n); }
+           };
+           inicio {
+               escribe(doble(3) + doble(4));
+           }
+           fin"#
+    );
+
+    // QF02 — llamada como sentencia + función nula.
+    // Cubre: ENDFUNC de función nula, ERA/GOSUB sin valor de retorno,
+    // CallStmt en vez de FactorAtomCall.
+    show_quads("QF02 — saluda() como sentencia (función nula)",
+        r#"programa fcalls_void;
+           nula saluda() {
+               { escribe("hola"); }
+           };
+           inicio {
+               saluda();
+               escribe("fin");
+           }
+           fin"#
+    );
+
+    // QF03 — llamada con varios argumentos y aritmética dentro del cuerpo.
+    // Cubre: PARAM en orden por cada arg, validación de tipo de cada arg,
+    // promoción a flotante dentro del cuerpo.
+    show_quads("QF03 — suma(2, 3) usada en asignación",
+        r#"programa fcalls_args;
+           vars resultado : entero;
+           entero suma(a : entero, b : entero) {
+               vars t : entero;
+               { t = a + b; regresa(t); }
+           };
+           inicio {
+               resultado = suma(2, 3);
+               escribe(resultado);
+           }
+           fin"#
+    );
+
+    // QF04 — llamada anidada: foo(bar(x), y) — la razón por la que el
+    // call_stack debe ser pila y no contador único.
+    show_quads("QF04 — llamada anidada cuadrado(cuadrado(3))",
+        r#"programa fcalls_nested;
+           entero cuadrado(n : entero) {
+               { regresa(n * n); }
+           };
+           inicio {
+               escribe(cuadrado(cuadrado(3)));
+           }
+           fin"#
+    );
+
     // ── Directorio de Funciones (T05 — calculadora) ───────────────────────────
     println!();
     println!("═══════════════════════════════════════════════════════════════");
