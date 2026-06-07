@@ -1,0 +1,14 @@
+programa factorialMain;
+vars n, fact, i : entero;
+inicio {
+    n = 5;
+    fact = 1;
+    i = 1;
+    mientras (i < n) haz {
+        i = i + 1;
+        fact = fact * i;
+    };
+    escribe("Factorial de 5:");
+    escribe(fact);
+}
+fin

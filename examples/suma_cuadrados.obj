@@ -1,0 +1,258 @@
+{
+  "quads": [
+    {
+      "op": "GOTO",
+      "arg1": "_",
+      "arg2": "_",
+      "result": "19"
+    },
+    {
+      "op": "*",
+      "arg1": "5000",
+      "arg2": "5000",
+      "result": "13000"
+    },
+    {
+      "op": "RETURN",
+      "arg1": "13000",
+      "arg2": "_",
+      "result": "1001"
+    },
+    {
+      "op": "ENDFUNC",
+      "arg1": "_",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "=",
+      "arg1": "18000",
+      "arg2": "_",
+      "result": "5001"
+    },
+    {
+      "op": "=",
+      "arg1": "18000",
+      "arg2": "_",
+      "result": "5002"
+    },
+    {
+      "op": "<",
+      "arg1": "5002",
+      "arg2": "5000",
+      "result": "13000"
+    },
+    {
+      "op": "GOTOF",
+      "arg1": "13000",
+      "arg2": "_",
+      "result": "17"
+    },
+    {
+      "op": "+",
+      "arg1": "5002",
+      "arg2": "18001",
+      "result": "13001"
+    },
+    {
+      "op": "=",
+      "arg1": "13001",
+      "arg2": "_",
+      "result": "5002"
+    },
+    {
+      "op": "ERA",
+      "arg1": "cuadrado",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PARAM",
+      "arg1": "5002",
+      "arg2": "_",
+      "result": "5000"
+    },
+    {
+      "op": "GOSUB",
+      "arg1": "cuadrado",
+      "arg2": "_",
+      "result": "1"
+    },
+    {
+      "op": "=",
+      "arg1": "1001",
+      "arg2": "_",
+      "result": "13002"
+    },
+    {
+      "op": "+",
+      "arg1": "5001",
+      "arg2": "13002",
+      "result": "13003"
+    },
+    {
+      "op": "=",
+      "arg1": "13003",
+      "arg2": "_",
+      "result": "5001"
+    },
+    {
+      "op": "GOTO",
+      "arg1": "_",
+      "arg2": "_",
+      "result": "6"
+    },
+    {
+      "op": "RETURN",
+      "arg1": "5001",
+      "arg2": "_",
+      "result": "1002"
+    },
+    {
+      "op": "ENDFUNC",
+      "arg1": "_",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PRINT_STR",
+      "arg1": "\"Suma de cuadrados de 1 a 3:\"",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "ERA",
+      "arg1": "sumaCuadrados",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PARAM",
+      "arg1": "18002",
+      "arg2": "_",
+      "result": "5000"
+    },
+    {
+      "op": "GOSUB",
+      "arg1": "sumaCuadrados",
+      "arg2": "_",
+      "result": "4"
+    },
+    {
+      "op": "=",
+      "arg1": "1002",
+      "arg2": "_",
+      "result": "13004"
+    },
+    {
+      "op": "PRINT",
+      "arg1": "13004",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PRINT_STR",
+      "arg1": "\"Suma de cuadrados de 1 a 5:\"",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "ERA",
+      "arg1": "sumaCuadrados",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PARAM",
+      "arg1": "18003",
+      "arg2": "_",
+      "result": "5000"
+    },
+    {
+      "op": "GOSUB",
+      "arg1": "sumaCuadrados",
+      "arg2": "_",
+      "result": "4"
+    },
+    {
+      "op": "=",
+      "arg1": "1002",
+      "arg2": "_",
+      "result": "13005"
+    },
+    {
+      "op": "PRINT",
+      "arg1": "13005",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PRINT_STR",
+      "arg1": "\"Suma de cuadrados de 1 a 10:\"",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "ERA",
+      "arg1": "sumaCuadrados",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PARAM",
+      "arg1": "18004",
+      "arg2": "_",
+      "result": "5000"
+    },
+    {
+      "op": "GOSUB",
+      "arg1": "sumaCuadrados",
+      "arg2": "_",
+      "result": "4"
+    },
+    {
+      "op": "=",
+      "arg1": "1002",
+      "arg2": "_",
+      "result": "13006"
+    },
+    {
+      "op": "PRINT",
+      "arg1": "13006",
+      "arg2": "_",
+      "result": "_"
+    }
+  ],
+  "constants": {
+    "ints": {
+      "18003": 5,
+      "18004": 10,
+      "18000": 0,
+      "18002": 3,
+      "18001": 1
+    },
+    "floats": {}
+  },
+  "globals": {
+    "n_int": 3,
+    "n_float": 0
+  },
+  "funcs": {
+    "sumaCuadrados": {
+      "n_local_int": 3,
+      "n_local_float": 0,
+      "n_temp_int": 4,
+      "n_temp_float": 0
+    },
+    "cuadrado": {
+      "n_local_int": 1,
+      "n_local_float": 0,
+      "n_temp_int": 1,
+      "n_temp_float": 0
+    }
+  },
+  "main": {
+    "n_temp_int": 7,
+    "n_temp_float": 0
+  }
+}

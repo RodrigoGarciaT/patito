@@ -1,0 +1,28 @@
+programa factorialFunc;
+vars resultado : entero;
+
+entero factorial(n : entero) {
+    vars f, i : entero;
+    {
+        f = 1;
+        i = 1;
+        mientras (i < n) haz {
+            i = i + 1;
+            f = f * i;
+        };
+        regresa(f);
+    }
+};
+
+inicio {
+    resultado = factorial(5);
+    escribe("5! =");
+    escribe(resultado);
+    resultado = factorial(6);
+    escribe("6! =");
+    escribe(resultado);
+    resultado = factorial(7);
+    escribe("7! =");
+    escribe(resultado);
+}
+fin

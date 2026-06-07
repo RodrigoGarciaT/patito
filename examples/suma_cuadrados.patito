@@ -1,0 +1,31 @@
+programa sumaCuadrados;
+vars resultado : entero;
+
+entero cuadrado(x : entero) {
+    {
+        regresa(x * x);
+    }
+};
+
+entero sumaCuadrados(n : entero) {
+    vars s, i : entero;
+    {
+        s = 0;
+        i = 0;
+        mientras (i < n) haz {
+            i = i + 1;
+            s = s + cuadrado(i);
+        };
+        regresa(s);
+    }
+};
+
+inicio {
+    escribe("Suma de cuadrados de 1 a 3:");
+    escribe(sumaCuadrados(3));
+    escribe("Suma de cuadrados de 1 a 5:");
+    escribe(sumaCuadrados(5));
+    escribe("Suma de cuadrados de 1 a 10:");
+    escribe(sumaCuadrados(10));
+}
+fin

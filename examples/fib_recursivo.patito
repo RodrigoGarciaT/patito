@@ -1,0 +1,20 @@
+programa fibRec;
+vars i : entero;
+
+entero fib(n : entero) {
+    {
+        si (n < 2) {
+            regresa(n);
+        };
+        regresa(fib(n - 1) + fib(n - 2));
+    }
+};
+
+inicio {
+    i = 0;
+    mientras (i < 20) haz {
+        escribe(fib(i));
+        i = i + 1;
+    };
+}
+fin

@@ -291,13 +291,181 @@ flotante          OK        OK
 ## Estructura del código
 
 ```
-src/
-├── lexer.rs          — Tokens y adapter logos → LALRPOP
-├── grammar.lalrpop   — Gramática LALR(1) con acciones embebidas (PNs)
-├── types.rs          — Type enum + bases de segmentos de memoria
-├── semantic_cube.rs  — Op enum, result_type, is_assignable, precedencias
-├── func_dir.rs       — VarInfo, FuncInfo, ConstTable, FuncDir + helpers de direcciones
-├── quad_gen.rs       — Operand, Quadruple, QuadGen (3 pilas + fila + contadores temps)
-├── context.rs        — SemanticContext: wrapper que coordina scope + qg + errores
-└── main.rs           — 17 tests de validación + 11 programas de cuádruplos + 4 tests de funciones
+patito/
+├── Cargo.toml             — dependencias (lalrpop, logos, serde, serde_json)
+├── build.rs               — script de compilación de LALRPOP
+├── run.sh                 — script bash que compila Patito → JSON → ejecuta en VM
+├── vm.cpp                 — Máquina virtual en C++ que ejecuta los .obj
+├── src/
+│   ├── lexer.rs           — Tokens y adapter logos → LALRPOP
+│   ├── grammar.lalrpop    — Gramática LALR(1) con acciones embebidas (PNs)
+│   ├── types.rs           — Type enum + bases de segmentos de memoria
+│   ├── semantic_cube.rs   — Op enum, result_type, is_assignable, precedencias
+│   ├── func_dir.rs        — VarInfo, FuncInfo, ConstTable, FuncDir + helpers de direcciones
+│   ├── quad_gen.rs        — Operand, Quadruple, QuadGen (3 pilas + fila + contadores temps)
+│   ├── context.rs         — SemanticContext: wrapper que coordina scope + qg + errores
+│   ├── vm_payload.rs      — Capa de exportación: convierte SemanticContext a JSON
+│   └── main.rs            — Test runner + modo "compilar archivo .patito → .obj"
+└── examples/              — Programas de prueba en Patito
+    ├── factorial_main.patito
+    ├── factorial_func.patito
+    ├── fib_main.patito
+    ├── fib_recursivo.patito
+    ├── mul_div.patito
+    ├── mcd.patito
+    └── suma_cuadrados.patito
 ```
+
+## Entrega 5 — Máquina Virtual y pipeline completo
+
+La VM ejecuta los cuádruplos generados por el compilador. El puente es un archivo `.obj` en JSON que contiene todo lo que la VM necesita: cuádruplos, tabla de constantes, tamaños de globales, metadata por función y metadata de main.
+
+### Pipeline
+
+```
+programa.patito  ──cargo run──▶  programa.obj  ──./vm──▶  output
+   (texto)          (compilador      (JSON)        (VM)        (terminal)
+                     en Rust)                   en C++
+```
+
+### Setup (una sola vez)
+
+```bash
+brew install nlohmann-json                # librería JSON para C++
+cd patito                                  # carpeta del proyecto
+g++ -std=c++17 -O2 -I/opt/homebrew/include -o vm vm.cpp   # compila la VM
+```
+
+### Correr un programa
+
+Hay un script `run.sh` que orquesta todo (compila VM + compila .patito + ejecuta). Le pasas la ruta del programa **sin extensión**:
+
+```bash
+./run.sh examples/factorial_main
+```
+
+Equivalente manual:
+
+```bash
+cargo run --quiet -- examples/factorial_main.patito   # genera examples/factorial_main.obj
+./vm examples/factorial_main.obj                       # ejecuta
+```
+
+### Salida esperada de cada ejemplo
+
+#### 1. `factorial_main` — Factorial calculado en el main con un `mientras`
+
+```text
+Factorial de 5:
+120
+```
+
+#### 2. `factorial_func` — Factorial como función con parámetro entero y `regresa`
+
+```text
+5! =
+120
+6! =
+720
+7! =
+5040
+```
+
+#### 3. `fib_main` — Fibonacci iterativo en el main (primeros 10 términos)
+
+```text
+Primeros 10 Fibonacci:
+0
+1
+1
+2
+3
+5
+8
+13
+21
+34
+```
+
+#### 4. `fib_recursivo` — Fibonacci como función **recursiva** (primeros 20 términos)
+
+Cada `fib(i)` se expande en llamadas anidadas; `fib(19)` solo hace ~13,500 llamadas recursivas. Stress test del `call_stack` y del back-patching de funciones.
+
+```text
+0
+1
+1
+2
+3
+5
+8
+13
+21
+34
+55
+89
+144
+233
+377
+610
+987
+1597
+2584
+4181
+```
+
+#### 5. `mul_div` — Aritmética mixta con promoción int↔float
+
+```text
+120          ← 20 * 6 (int × int → int)
+3            ← 20 / 6 (int / int → int truncada)
+10           ← 5.0 * 2.0 (float × float)
+2.5          ← 5.0 / 2.0
+40           ← 20 * 2.0 (int × float → float, promueve el 20)
+0.833333     ← 5.0 / 6 (float / int → float)
+```
+
+#### 6. `mcd` — Máximo Común Divisor (algoritmo de Euclides). Sin operador módulo nativo, lo simula con `a - (a/b)*b`. Demuestra reasignación de parámetros, ciclo con `!=`, paréntesis en expresiones.
+
+```text
+MCD(48, 18) =
+6
+MCD(100, 75) =
+25
+MCD(17, 5) =
+1
+MCD(81, 27) =
+27
+```
+
+#### 7. `suma_cuadrados` — Función llamando a otra función. `sumaCuadrados(n)` invoca a `cuadrado(i)` dentro de un ciclo, demostrando manejo correcto del `call_stack` y del activation record pendiente.
+
+```text
+Suma de cuadrados de 1 a 3:
+14
+Suma de cuadrados de 1 a 5:
+55
+Suma de cuadrados de 1 a 10:
+385
+```
+
+### Features cubiertas por los ejemplos
+
+| Característica | Cubierta por |
+|---|---|
+| Asignación de variables | Todos |
+| Expresiones aritméticas con precedencia | Todos |
+| `escribe()` con letrero | Casi todos |
+| `escribe()` con expresión | Todos |
+| Ciclo `mientras / haz` | factorial_main, factorial_func, fib_main, fib_recursivo, mcd, suma_cuadrados |
+| Decisión `si / sino` | fib_recursivo |
+| Declaración de función con `regresa` | factorial_func, fib_recursivo, mcd, suma_cuadrados |
+| Parámetros con tipo | factorial_func, fib_recursivo, mcd, suma_cuadrados |
+| Variables locales | factorial_func, mcd, suma_cuadrados |
+| Llamada a función desde main | factorial_func, fib_recursivo, mcd, suma_cuadrados |
+| Llamada a función desde otra función | suma_cuadrados |
+| Llamadas **recursivas** | fib_recursivo |
+| Llamadas anidadas en expresión | fib_recursivo (`fib(n-1) + fib(n-2)`) |
+| Promoción de tipos en aritmética y asignación | mul_div |
+| División entera vs flotante | mul_div, mcd |
+| Comparación con `!=` | mcd |

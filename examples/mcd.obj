@@ -1,0 +1,274 @@
+{
+  "quads": [
+    {
+      "op": "GOTO",
+      "arg1": "_",
+      "arg2": "_",
+      "result": "12"
+    },
+    {
+      "op": "!=",
+      "arg1": "5001",
+      "arg2": "18000",
+      "result": "13000"
+    },
+    {
+      "op": "GOTOF",
+      "arg1": "13000",
+      "arg2": "_",
+      "result": "10"
+    },
+    {
+      "op": "=",
+      "arg1": "5001",
+      "arg2": "_",
+      "result": "5002"
+    },
+    {
+      "op": "/",
+      "arg1": "5000",
+      "arg2": "5001",
+      "result": "13001"
+    },
+    {
+      "op": "*",
+      "arg1": "13001",
+      "arg2": "5001",
+      "result": "13002"
+    },
+    {
+      "op": "-",
+      "arg1": "5000",
+      "arg2": "13002",
+      "result": "13003"
+    },
+    {
+      "op": "=",
+      "arg1": "13003",
+      "arg2": "_",
+      "result": "5001"
+    },
+    {
+      "op": "=",
+      "arg1": "5002",
+      "arg2": "_",
+      "result": "5000"
+    },
+    {
+      "op": "GOTO",
+      "arg1": "_",
+      "arg2": "_",
+      "result": "1"
+    },
+    {
+      "op": "RETURN",
+      "arg1": "5000",
+      "arg2": "_",
+      "result": "1001"
+    },
+    {
+      "op": "ENDFUNC",
+      "arg1": "_",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PRINT_STR",
+      "arg1": "\"MCD(48, 18) =\"",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "ERA",
+      "arg1": "mcd",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PARAM",
+      "arg1": "18001",
+      "arg2": "_",
+      "result": "5000"
+    },
+    {
+      "op": "PARAM",
+      "arg1": "18002",
+      "arg2": "_",
+      "result": "5001"
+    },
+    {
+      "op": "GOSUB",
+      "arg1": "mcd",
+      "arg2": "_",
+      "result": "1"
+    },
+    {
+      "op": "=",
+      "arg1": "1001",
+      "arg2": "_",
+      "result": "13004"
+    },
+    {
+      "op": "PRINT",
+      "arg1": "13004",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PRINT_STR",
+      "arg1": "\"MCD(100, 75) =\"",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "ERA",
+      "arg1": "mcd",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PARAM",
+      "arg1": "18003",
+      "arg2": "_",
+      "result": "5000"
+    },
+    {
+      "op": "PARAM",
+      "arg1": "18004",
+      "arg2": "_",
+      "result": "5001"
+    },
+    {
+      "op": "GOSUB",
+      "arg1": "mcd",
+      "arg2": "_",
+      "result": "1"
+    },
+    {
+      "op": "=",
+      "arg1": "1001",
+      "arg2": "_",
+      "result": "13005"
+    },
+    {
+      "op": "PRINT",
+      "arg1": "13005",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PRINT_STR",
+      "arg1": "\"MCD(17, 5) =\"",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "ERA",
+      "arg1": "mcd",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PARAM",
+      "arg1": "18005",
+      "arg2": "_",
+      "result": "5000"
+    },
+    {
+      "op": "PARAM",
+      "arg1": "18006",
+      "arg2": "_",
+      "result": "5001"
+    },
+    {
+      "op": "GOSUB",
+      "arg1": "mcd",
+      "arg2": "_",
+      "result": "1"
+    },
+    {
+      "op": "=",
+      "arg1": "1001",
+      "arg2": "_",
+      "result": "13006"
+    },
+    {
+      "op": "PRINT",
+      "arg1": "13006",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PRINT_STR",
+      "arg1": "\"MCD(81, 27) =\"",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "ERA",
+      "arg1": "mcd",
+      "arg2": "_",
+      "result": "_"
+    },
+    {
+      "op": "PARAM",
+      "arg1": "18007",
+      "arg2": "_",
+      "result": "5000"
+    },
+    {
+      "op": "PARAM",
+      "arg1": "18008",
+      "arg2": "_",
+      "result": "5001"
+    },
+    {
+      "op": "GOSUB",
+      "arg1": "mcd",
+      "arg2": "_",
+      "result": "1"
+    },
+    {
+      "op": "=",
+      "arg1": "1001",
+      "arg2": "_",
+      "result": "13007"
+    },
+    {
+      "op": "PRINT",
+      "arg1": "13007",
+      "arg2": "_",
+      "result": "_"
+    }
+  ],
+  "constants": {
+    "ints": {
+      "18008": 27,
+      "18003": 100,
+      "18002": 18,
+      "18005": 17,
+      "18006": 5,
+      "18007": 81,
+      "18000": 0,
+      "18004": 75,
+      "18001": 48
+    },
+    "floats": {}
+  },
+  "globals": {
+    "n_int": 2,
+    "n_float": 0
+  },
+  "funcs": {
+    "mcd": {
+      "n_local_int": 3,
+      "n_local_float": 0,
+      "n_temp_int": 4,
+      "n_temp_float": 0
+    }
+  },
+  "main": {
+    "n_temp_int": 8,
+    "n_temp_float": 0
+  }
+}

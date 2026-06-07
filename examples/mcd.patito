@@ -1,0 +1,26 @@
+programa mcdTest;
+vars resultado : entero;
+
+entero mcd(x : entero, y : entero) {
+    vars t : entero;
+    {
+        mientras (y != 0) haz {
+            t = y;
+            y = x - (x / y) * y;
+            x = t;
+        };
+        regresa(x);
+    }
+};
+
+inicio {
+    escribe("MCD(48, 18) =");
+    escribe(mcd(48, 18));
+    escribe("MCD(100, 75) =");
+    escribe(mcd(100, 75));
+    escribe("MCD(17, 5) =");
+    escribe(mcd(17, 5));
+    escribe("MCD(81, 27) =");
+    escribe(mcd(81, 27));
+}
+fin

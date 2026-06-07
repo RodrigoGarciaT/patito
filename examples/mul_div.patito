@@ -1,0 +1,22 @@
+programa mulDivTest;
+vars a, b, c : entero;
+        x, y, z : flotante;
+inicio {
+    a = 20;
+    b = 6;
+    c = a * b;
+    escribe(c);
+    c = a / b;
+    escribe(c);
+    x = 5.0;
+    y = 2.0;
+    z = x * y;
+    escribe(z);
+    z = x / y;
+    escribe(z);
+    z = a * y;
+    escribe(z);
+    z = x / b;
+    escribe(z);
+}
+fin

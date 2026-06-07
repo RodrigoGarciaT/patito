@@ -11,6 +11,7 @@ mod semantic_cube;
 mod func_dir;
 mod quad_gen;
 mod context;
+mod vm_payload;
 
 use lalrpop_util::lalrpop_mod;
 lalrpop_mod!(grammar);
@@ -100,9 +101,59 @@ fn show_quads(label: &str, src: &str) {
     }
 }
 
+// ── Modo "compilar archivo" — Opción A subcomando ────────────────────────────
+
+fn compile_file(path: &str) {
+    let source = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| {
+            eprintln!("No pude leer '{}': {}", path, e);
+            std::process::exit(1);
+        });
+
+    match parse(&source) {
+        Ok(ctx) if !ctx.has_errors() => {
+            let payload = vm_payload::build_payload(&ctx);
+            let json = serde_json::to_string_pretty(&payload)
+                .expect("error serializando a JSON");
+
+            // Determinar el path de salida: cambia .patito o .txt por .obj
+            let obj_path = if path.ends_with(".patito") {
+                path.replace(".patito", ".obj")
+            } else if path.ends_with(".txt") {
+                path.replace(".txt", ".obj")
+            } else {
+                format!("{}.obj", path)
+            };
+
+            std::fs::write(&obj_path, json)
+                .expect("no se pudo escribir el .obj");
+            println!("✅ {} → {}", path, obj_path);
+        }
+        Ok(ctx) => {
+            eprintln!("Errores semánticos en '{}':", path);
+            for e in &ctx.errors {
+                eprintln!("  {}", e);
+            }
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Error sintáctico en '{}': {}", path, e);
+            std::process::exit(1);
+        }
+    }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 fn main() {
+    // Si se pasa un archivo como argumento → modo compilar
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 2 {
+        compile_file(&args[1]);
+        return;
+    }
+
+    // Si no → modo tests (comportamiento existente)
     println!("═══════════════════════════════════════════════════════════════");
     println!("  Patito — Entrega 3: Cuádruplos");
     println!("═══════════════════════════════════════════════════════════════\n");
